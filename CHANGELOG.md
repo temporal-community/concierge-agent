@@ -12,6 +12,7 @@ All notable project changes are documented here.
 
 ### Changed
 
+- Default TTS voice is Flux `flux-hannah-en` (provider `v2`); Aura remains configurable via `Deepgram:SpeakModel`. STT stays on Flux `flux-general-en`.
 - ADR 0007 and related implementation status now record steps 3–4 as implemented, with step 5 retrieval pending.
 - README and architecture brief identify `tests/Concierge.Evaluation/` as the evaluation package, distinguish validated local Ollama calls from unverified Foundry live calls, and retain the setup run's persisted-state evidence limits.
 - AppHost passes its selected environment name to WorkflowServer and Web; the environment handoff is not hard-coded to Development.

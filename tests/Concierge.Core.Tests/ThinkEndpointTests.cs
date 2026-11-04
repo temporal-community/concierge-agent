@@ -248,7 +248,7 @@ public sealed class ThinkEndpointTests : IDisposable
     }
 
     [Fact]
-    public void DeepgramSettingsUseFluxListenAndAuraSpeakDefaultsAndDeferEndChat()
+    public void DeepgramSettingsUseFluxListenAndFluxSpeakDefaultsAndDeferEndChat()
     {
         using var settings = JsonDocument.Parse(VoiceAgentSettings.Build(
             new DeepgramVoiceOptions(),
@@ -268,18 +268,19 @@ public sealed class ThinkEndpointTests : IDisposable
         Assert.Equal("flux-general-en", listen.GetProperty("model").GetString());
         Assert.Equal("v2", listen.GetProperty("version").GetString());
         var speak = agent.GetProperty("speak").GetProperty("provider");
-        Assert.Equal("aura-2-thalia-en", speak.GetProperty("model").GetString());
-        Assert.Equal("v1", speak.GetProperty("version").GetString());
+        Assert.Equal("flux-hannah-en", speak.GetProperty("model").GetString());
+        Assert.Equal("v2", speak.GetProperty("version").GetString());
         Assert.Equal(1.0, speak.GetProperty("speed").GetDouble());
     }
 
     [Fact]
-    public void DeepgramNovaOverrideAndAuraDefaultKeepTheV1ProviderContract()
+    public void DeepgramNovaAndAuraOverridesKeepTheV1ProviderContract()
     {
         using var settings = JsonDocument.Parse(VoiceAgentSettings.Build(
             new DeepgramVoiceOptions
             {
                 ListenModel = "nova-3",
+                SpeakModel = "aura-2-thalia-en",
             },
             new Uri("https://think.example/v1/chat/completions"),
             "opaque-bearer",
