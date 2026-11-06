@@ -202,7 +202,7 @@ options.
 | --- | --- | --- | --- |
 | `Deepgram:ApiKey` | Empty | n/a | Required for browser voice; supplied through AppHost `Parameters:deepgram-api-key`. The key must be valid at Deepgram; Web does not validate it at startup. |
 | `Deepgram:ListenModel` | `flux-general-en` | n/a | Deepgram speech-to-text model; Flux uses provider version `v2`, Nova uses `v1`; configure on Web, not forwarded by AppHost. |
-| `Deepgram:SpeakModel` | `aura-2-thalia-en` | n/a | Deepgram text-to-speech model; Aura uses provider version `v1`, Flux uses `v2`; configure on Web, not forwarded by AppHost. |
+| `Deepgram:SpeakModel` | `flux-hannah-en` | n/a | Deepgram text-to-speech model; Flux (default) uses provider version `v2`, Aura (still configurable) uses `v1`; configure on Web, not forwarded by AppHost. |
 | `Deepgram:Speed` | `1.0` | Number | TTS speed; Flux accepts `0.5–1.5` in `0.05` steps, Aura accepts `0.7–1.5`; configure on Web, not forwarded by AppHost. |
 | `Deepgram:IdleTimeoutMinutes` | `2` | Minutes | Integer `1–60`; ends an idle voice chat; configure on Web, not forwarded by AppHost. |
 
@@ -217,6 +217,53 @@ warning, replies suppress it while in progress, and reconnect starts a fresh idl
 period. After an idle chat ends, the UI explicitly says it ended due to inactivity
 and offers stay verification to resume. This warning has no separate configuration
 and does not change the idle timeout policy.
+
+## Remote API clients
+
+By default, Web listens only on localhost, and the only public tunnel is the
+Think callback that Deepgram uses. Clients on another device or network, such
+as a phone or a hardware companion, need the opt-in API tunnel. Set this in
+`src/Concierge.AppHost/appsettings.json` or AppHost user secrets:
+
+| Setting | Default | Purpose |
+| --- | --- | --- |
+| `RemoteAccess:PublicTunnel` | `false` | When `true`, AppHost adds an anonymous dev tunnel, `api-tunnel`, to Web's HTTPS endpoint. Its public URL is shown on the `api-tunnel` resource in the Aspire dashboard. |
+
+The tunnel exposes the guest UI and the guest HTTP API:
+
+| Endpoint | Auth | Body | Returns |
+| --- | --- | --- | --- |
+| `POST /api/concierge/sessions` | None | `{lastName, roomNumber}` | `{credential, expiresAtUtc, stayId, sessionId}`; `404 guest_not_found` when no eligible stay matches |
+| `POST /api/concierge/turns` | `Bearer <credential>` | `{turnId, userMessage, channel}` | `{turnId, assistantMessage, sequence}` |
+| `GET /api/concierge/history` | `Bearer <credential>` | None | `{turns: [...]}` |
+| `POST /api/concierge/end` | `Bearer <credential>` | None | `204` |
+
+- **Channel.** `channel` is `web` or `voice`, and it is case-sensitive. Use
+  `voice` when the answer will be spoken: replies are worded for listening and
+  contain no lists.
+- **Turn IDs.** `turnId` is at most 128 characters. Retrying with the same ID
+  and text joins the turn already admitted, so a client can retry after a
+  timeout without booking twice.
+- **Message size.** `userMessage` is at most 2,000 UTF-8 bytes.
+- **Credential lifetime.** A credential lasts until the stay's eligibility
+  ends, or until `POST /reset` or `POST /end`. On `401`, verify again.
+- **Sessions per stay.** Each verification creates a separate session for the
+  same stay workflow. A browser and another client can run side by side and
+  share the stay's memory and rides.
+- **Live transcript.** A turn another session adds to the stay, through the
+  API, another tab or browser voice, appears on open guest pages for that stay
+  without a reload. A reset from another session clears them. This is
+  in-process, so it only works while every client goes through the same Web
+  instance, which is how the app runs.
+
+Errors are `{code, message}`. The codes are `invalid_request` (400),
+`unauthorized` (401), `guest_not_found` (404), `turn_conflict` (409) and
+`unavailable` (503).
+
+> **Security.** The tunnel is anonymous. Anyone with the URL can try last
+> name and room combinations against `/sessions`, and the endpoint has no
+> rate limit. Use it only with the fictional demo stays, and turn it off
+> after the demo.
 
 ## Knowledge base and demo stays
 
@@ -248,6 +295,7 @@ a new stay workflow. Existing stay workflows retain their original policy.
 | --- | --- | --- | --- |
 | `Concierge:Persistence:FlushIntervalSeconds` | `30` | Seconds | Integer `1–600`; maximum interval before a transcript batch is persisted. |
 | `Concierge:Persistence:FlushBatchSize` | `5` | Turns | Integer `1–100`; transcript batch size. |
+| `Concierge:Persistence:IdleRolloverSeconds` | `900` | Seconds | `0` (off) or integer `60–86400`. While a stay is idle and ride-feed polls are waiting, it continues as new once per interval. That releases polls left by closed tabs and restarted Web instances, which otherwise count against Temporal's in-flight Update limit until the stay ends. |
 
 Web validates these at startup. AppHost does not read or forward this policy.
 Ending a chat flushes pending transcript turns; the policy is passed when a new

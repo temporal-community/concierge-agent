@@ -1,0 +1,34 @@
+@using Concierge.Web.Services
+
+@* The voice state above the message input's top-right corner, and to its left what the guest just said
+   or a failure. Floats over the input's top edge, so starting voice doesn't move the input. The text
+   carries the meaning; the dot is decoration. *@
+
+@if (Voice is { Mode: true } voice)
+{
+    <div class="voice-status-row" data-state="@voice.State">
+        @if (Bubble(voice) is { } bubble)
+        {
+            <div class="voice-input__bubble @(bubble.IsError ? "voice-input__bubble--error" : null)"
+                 role="@(bubble.IsError ? "alert" : "status")">@bubble.Text</div>
+        }
+        <span class="voice-input__status" role="status" aria-live="polite">
+            <span class="voice-input__dot" aria-hidden="true"></span>
+            <span class="voice-input__label">@voice.StateLabel</span>
+        </span>
+    </div>
+}
+
+@code {
+    /// <summary>Null until the page has a verified session.</summary>
+    [Parameter]
+    public AgenticVoiceController? Voice { get; set; }
+
+    /// <summary>A failure, else what the guest just said while the concierge works on it.</summary>
+    private static (string Text, bool IsError)? Bubble(AgenticVoiceController voice) => voice switch
+    {
+        { State: "disconnected", Message: { Length: > 0 } message } => (message, true),
+        { PendingTranscript: { Length: > 0 } said } => ($"You said: “{said}”", false),
+        _ => null,
+    };
+}

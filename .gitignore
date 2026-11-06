@@ -125,6 +125,13 @@ skills-lock.json
 .*.env
 .impeccable/
 .clans/
-.claude/
-.agents/
+# Agent folders stay local except the repo's own skills; .claude/skills links to .agents/skills.
+.claude/*
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/concierge-setup
+.agents/*
+!.agents/skills/
+.agents/skills/*
+!.agents/skills/concierge-setup/
 tests/Concierge.Evaluation/results/

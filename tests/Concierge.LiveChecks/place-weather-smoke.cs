@@ -1,6 +1,5 @@
 #:project ../../src/Concierge.WorkflowServer/Concierge.WorkflowServer.csproj
 // Transitive OllamaSharp analyzer targets a newer compiler; it does not affect this check.
-#:property NoWarn=$(NoWarn);CS9057
 
 // Opt-in live check for ADR 0009 Step 2. Calls Geoapify and Open-Meteo with the same
 // resolver and weather service the WorkflowServer uses. Never prints the API key.

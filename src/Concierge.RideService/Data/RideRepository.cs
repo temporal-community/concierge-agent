@@ -372,6 +372,72 @@ public sealed class RideRepository(NpgsqlDataSource dataSource, TimeZoneInfo hot
         return results;
     }
 
+    /// <summary>Every ride of one stay in any status; the booking workflow id is the ride id.</summary>
+    public async Task<IReadOnlyList<Guid>> ListStayRideIdsAsync(
+        Guid guestId,
+        Guid stayId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = dataSource.CreateCommand(
+            "SELECT id FROM rides WHERE guest_id = $1 AND stay_id = $2;");
+        command.Parameters.AddWithValue(guestId);
+        command.Parameters.AddWithValue(stayId);
+        var ids = new List<Guid>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            ids.Add(reader.GetGuid(0));
+        }
+
+        return ids;
+    }
+
+    /// <summary>Hard-deletes one stay's rides and their events. Idempotent.</summary>
+    public async Task DeleteStayRidesAsync(
+        Guid guestId,
+        Guid stayId,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        // Lock the rides first: a transition that already holds a ride row would otherwise
+        // insert an event after the event delete and fail the ride delete's foreign key.
+        await using (var lockRides = new NpgsqlCommand(
+            "SELECT id FROM rides WHERE guest_id = $1 AND stay_id = $2 FOR UPDATE;",
+            connection,
+            transaction))
+        {
+            lockRides.Parameters.AddWithValue(guestId);
+            lockRides.Parameters.AddWithValue(stayId);
+            await lockRides.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await using (var deleteEvents = new NpgsqlCommand(
+            """
+            DELETE FROM ride_events
+            WHERE ride_id IN (SELECT id FROM rides WHERE guest_id = $1 AND stay_id = $2);
+            """,
+            connection,
+            transaction))
+        {
+            deleteEvents.Parameters.AddWithValue(guestId);
+            deleteEvents.Parameters.AddWithValue(stayId);
+            await deleteEvents.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await using (var deleteRides = new NpgsqlCommand(
+            "DELETE FROM rides WHERE guest_id = $1 AND stay_id = $2;",
+            connection,
+            transaction))
+        {
+            deleteRides.Parameters.AddWithValue(guestId);
+            deleteRides.Parameters.AddWithValue(stayId);
+            await deleteRides.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+    }
+
     public DateTimeOffset ToHotelTime(DateTimeOffset value) =>
         TimeZoneInfo.ConvertTime(value, hotelTimeZone);
 

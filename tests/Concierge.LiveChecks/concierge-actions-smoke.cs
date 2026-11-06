@@ -1,5 +1,4 @@
 #:project ../../src/Concierge.WorkflowServer/Concierge.WorkflowServer.csproj
-#:property NoWarn=$(NoWarn);CS9057
 #:property JsonSerializerIsReflectionEnabledByDefault=true
 #:property PublishAot=false
 

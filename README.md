@@ -1,13 +1,13 @@
 # Concierge Agent
 
 A virtual concierge for Hotel ZGY, a fictional hotel in Wynwood, Miami. Built
-with .NET 10, ASP.NET Core, Aspire, Temporal, and Deepgram’s Voice Agent API.
+with .NET 11, ASP.NET Core, Aspire, Temporal, and Deepgram’s Voice Agent API.
 Guests can use text or browser voice to ask about the hotel, check weather,
 find nearby places and more
 
 ## Prerequisites
 
-- [.NET 10 SDK](https://dotnet.microsoft.com/download)
+- [.NET 11 SDK](https://dotnet.microsoft.com/download/dotnet/11.0) (11.0.100-rc.3 or later; pinned in `global.json`)
 - [Docker](https://www.docker.com/products/)
 - [just](https://just.systems)
 - [Aspire CLI](https://aspire.dev)
@@ -18,6 +18,35 @@ find nearby places and more
 - [Deepgram](https://deepgram.com/) account and API key with Voice Agent API access 
 
 Run all commands below from the repository root.
+
+## Set up with an AI agent
+
+The repo includes a `concierge-setup` [agent skill](.agents/skills/concierge-setup/SKILL.md)
+that checks prerequisites, walks you through each account and key, and starts and
+verifies the app. Open the repo in your agent and ask it to set up the project,
+or invoke the skill directly:
+
+| Agent | Invoke |
+| --- | --- |
+| Claude Code | `/concierge-setup` |
+| Codex | `$concierge-setup`, or pick it from `/skills` |
+| GitHub Copilot | Ask to "use the concierge-setup skill"; Copilot selects skills from your prompt |
+
+The agent never handles your keys. When it asks for one, copy the command it
+gives you, replace `<your-key>` with your key, and run it in your own terminal:
+
+```bash
+dotnet user-secrets set "Parameters:<parameter-name>" "<your-key>" --project src/Concierge.AppHost
+```
+
+Without an agent, run the setup check to see what's missing:
+
+```bash
+dotnet run --file .agents/skills/concierge-setup/scripts/check-setup.cs
+```
+
+Then follow the [account steps](.agents/skills/concierge-setup/references/accounts.md)
+and the sections below.
 
 ## Run locally
 
@@ -92,6 +121,9 @@ aspire stop --non-interactive --apphost src/Concierge.AppHost/Concierge.AppHost.
 
 Startup prepares the database, demo stays, and Markdown knowledge base.
 
+To restart one guest's demo, use **Start over** in the chat header. It deletes that stay's
+conversation and rides and keeps you checked in. Use `just reset` only to wipe every stay.
+
 #### Demo guest check-in information
 
 These are seeded demo stays. Use any row's last name and room number to verify
@@ -123,7 +155,7 @@ Commonly changed settings:
 | `AI:Chat:Provider` / `AI:Embeddings:Provider` | `Ollama` | `Ollama` or `Foundry`. |
 | `Hotel:Address` | `2217 NW Miami Court, Miami, FL 33127` | Anchor for weather, routes, and rides. |
 | `Deepgram:ListenModel` | `flux-general-en` | Speech-to-text model. |
-| `Deepgram:SpeakModel` | `aura-2-thalia-en` | Text-to-speech voice. |
+| `Deepgram:SpeakModel` | `flux-hannah-en` | Text-to-speech voice. |
 | `Deepgram:Speed` | `1.0` | Speech rate. |
 
 ### Use Foundry

@@ -931,11 +931,15 @@ internal sealed class PlaybackQueue(int capacity)
     /// <summary>Wakes the sender after a playback acknowledgement frees lead budget.</summary>
     public void Signal() => signal.Release();
 
+    /// <summary>
+    /// Returns the next item as soon as it is sendable. Signals only mean "state may have changed",
+    /// so the queue is checked before waiting: one ack can free room for several frames, and a
+    /// signal consumed while the pacer was full must not leave sendable audio waiting.
+    /// </summary>
     public async Task<PlaybackItem> DequeueAsync(PlaybackPacer pacer, CancellationToken cancellationToken)
     {
         while (true)
         {
-            await signal.WaitAsync(cancellationToken);
             lock (items)
             {
                 if (items.First is { } first
@@ -945,6 +949,8 @@ internal sealed class PlaybackQueue(int capacity)
                     return first.Value;
                 }
             }
+
+            await signal.WaitAsync(cancellationToken);
         }
     }
 }

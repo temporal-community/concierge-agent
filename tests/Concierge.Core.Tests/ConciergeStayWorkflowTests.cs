@@ -807,6 +807,159 @@ public sealed class ConciergeStayWorkflowTests(PostgreSqlFixture postgreSql)
             "Miami Beach",
             DateTimeOffset.UtcNow.AddMinutes(45));
 
+    /// <summary>
+    /// ADR 0015: a ride-feed poll whose subscriber went away stays an in-flight Update until the stay
+    /// continues as new. An idle stay with waiting polls rolls over once per interval, which completes the
+    /// abandoned poll, and a live subscriber carries on in the new run.
+    /// </summary>
+    [Fact]
+    public async Task IdleRolloverReleasesAnAbandonedPollAndKeepsLiveSubscribers()
+    {
+        await using var host = await ConciergeTestHost.StartAsync(postgreSql, flushIntervalSeconds: 1);
+        var stayId = await SeedStayAsync(host);
+        var handle = await host.StartStayAsync(stayId, ConciergeTestHost.HotelMidnightUtc(ConciergeTestHost.HotelToday.AddDays(2)), idleRolloverSeconds: 2);
+        var firstRunId = (await handle.DescribeAsync()).RunId;
+
+        // A subscriber that gives up mid-poll, as a closed tab does: its accepted Update stays behind.
+        using (var gone = new CancellationTokenSource())
+        {
+            await using var abandoned = new WorkflowStreamClient(host.Environment.Client, handle.Id);
+            await using var poll = abandoned.GetTopic<RideActivityEntry>(RideActivityFeed.Topic).SubscribeAsync(0)
+                .GetAsyncEnumerator(gone.Token);
+            var waiting = poll.MoveNextAsync().AsTask();
+            await WaitUntilAsync(async () => OpenUpdates(await handle.FetchHistoryAsync()) >= 1, TimeSpan.FromSeconds(10));
+            gone.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => waiting);
+        }
+
+        Assert.Equal(1, OpenUpdates(await handle.FetchHistoryAsync()));
+        await using var live = new WorkflowStreamClient(host.Environment.Client, handle.Id);
+        await using var subscription = live.GetTopic<RideActivityEntry>(RideActivityFeed.Topic).SubscribeAsync(0).GetAsyncEnumerator();
+        var next = subscription.MoveNextAsync().AsTask();
+
+        await WaitUntilAsync(async () => (await handle.DescribeAsync()).RunId != firstRunId, TimeSpan.FromSeconds(20));
+        var firstRun = host.Environment.Client.GetWorkflowHandle<ConciergeStayWorkflow>(handle.Id, firstRunId);
+        Assert.Equal(0, OpenUpdates(await firstRun.FetchHistoryAsync()));
+        Assert.Equal(2, (await ReadRunInputAsync(host, handle)).IdleRolloverSeconds);
+
+        await using var publisher = new WorkflowStreamClient(host.Environment.Client, handle.Id);
+        var entry = new RideActivityEntry(Guid.NewGuid(), 1, "Booked", DateTimeOffset.UtcNow, "Hotel ZGY", "Airport", DateTimeOffset.UtcNow.AddHours(1));
+        publisher.GetTopic<RideActivityEntry>(RideActivityFeed.Topic).Publish(entry, forceFlush: true);
+        await publisher.FlushAsync();
+        Assert.True(await next.WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.Equal(entry, subscription.Current.Value);
+
+        var guest = new ConciergeVerifiedGuest(stayId, "Cecil", "Phillip", "112");
+        var turn = await handle.ExecuteUpdateAsync(wf => wf.SubmitTurnAsync(new ConciergeTurnSubmission("after-rollover", "Pool hours?", "web", guest)));
+        Assert.Equal("after-rollover", Assert.Single((await handle.ExecuteUpdateAsync(wf => wf.GetHistoryAsync())).Turns).TurnId);
+        Assert.Equal(0, turn.Sequence);
+
+        var replayer = new WorkflowReplayer(new WorkflowReplayerOptions
+        {
+            DataConverter = DurableAIDataConverter.Instance,
+        }.AddWorkflow<ConciergeStayWorkflow>());
+        await replayer.ReplayWorkflowAsync(await firstRun.FetchHistoryAsync());
+        await replayer.ReplayWorkflowAsync(await handle.FetchHistoryAsync());
+    }
+
+    /// <summary>Nothing waiting, nothing to release: an idle stay without subscribers keeps its run.</summary>
+    [Fact]
+    public async Task IdleRolloverSkipsAStayWithNothingWaiting()
+    {
+        await using var host = await ConciergeTestHost.StartAsync(postgreSql, flushIntervalSeconds: 1);
+        var stayId = await SeedStayAsync(host);
+        var handle = await host.StartStayAsync(stayId, ConciergeTestHost.HotelMidnightUtc(ConciergeTestHost.HotelToday.AddDays(2)), idleRolloverSeconds: 2);
+        var runId = (await handle.DescribeAsync()).RunId;
+
+        await Task.Delay(TimeSpan.FromSeconds(7));
+
+        Assert.Equal(runId, (await handle.DescribeAsync()).RunId);
+    }
+
+    /// <summary>A turn in progress holds the rollover back; it happens once the turn is persisted.</summary>
+    [Fact]
+    public async Task IdleRolloverWaitsForARunningTurn()
+    {
+        await using var host = await ConciergeTestHost.StartAsync(postgreSql, flushIntervalSeconds: 1);
+        var stayId = await SeedStayAsync(host);
+        var handle = await host.StartStayAsync(stayId, ConciergeTestHost.HotelMidnightUtc(ConciergeTestHost.HotelToday.AddDays(2)), idleRolloverSeconds: 2);
+        var runId = (await handle.DescribeAsync()).RunId;
+        using var stopListening = new CancellationTokenSource();
+        await using var live = new WorkflowStreamClient(host.Environment.Client, handle.Id);
+        await using var subscription = live.GetTopic<RideActivityEntry>(RideActivityFeed.Topic).SubscribeAsync(0)
+            .GetAsyncEnumerator(stopListening.Token);
+        var listening = subscription.MoveNextAsync().AsTask();
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        host.ChatClient.Gate = gate;
+
+        var guest = new ConciergeVerifiedGuest(stayId, "Cecil", "Phillip", "112");
+        var turn = handle.ExecuteUpdateAsync(wf => wf.SubmitTurnAsync(new ConciergeTurnSubmission("slow", "Breakfast?", "web", guest)));
+        await host.ChatClient.WaitForCallAsync().WaitAsync(TimeSpan.FromSeconds(20));
+        await Task.Delay(TimeSpan.FromSeconds(5));
+        Assert.Equal(runId, (await handle.DescribeAsync()).RunId);
+
+        gate.SetResult();
+        Assert.Equal("slow", (await turn).TurnId);
+        await WaitUntilAsync(async () => (await handle.DescribeAsync()).RunId != runId, TimeSpan.FromSeconds(20));
+        Assert.Equal(["slow"], await host.ReadPersistedTurnIdsAsync(stayId));
+
+        // An enumerator can't be disposed while a move is pending: stop listening first.
+        stopListening.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => listening);
+    }
+
+    /// <summary>
+    /// ADR 0015 (2026-11-06): Azure's front end reset the upstream connection and the provider answered with
+    /// an error item instead of a reply. That item now fails the model call, so Temporal retries it.
+    /// </summary>
+    [Fact]
+    public async Task AProviderErrorItemIsRetriedInsteadOfFailingTheTurn()
+    {
+        await using var host = await ConciergeTestHost.StartAsync(postgreSql, flushIntervalSeconds: 1);
+        var (stayId, handle) = await StartStayAsync(host);
+        host.ChatClient.ScriptedResponses.Enqueue(ProviderError());
+        host.ChatClient.AnswerFactory = _ => "Breakfast is 7 to 10.";
+
+        var result = await handle.ExecuteUpdateAsync(wf => wf.SubmitTurnAsync(Turn(stayId, "retried", "Breakfast?", "web")));
+
+        Assert.Equal("Breakfast is 7 to 10.", result.AssistantMessage);
+        Assert.Equal(2, host.ChatClient.Requests.Count);
+    }
+
+    /// <summary>When every attempt fails the guest gets the actionable reply, not a failed turn.</summary>
+    [Fact]
+    public async Task ProviderErrorsOnEveryAttemptGetTheModelFailureReply()
+    {
+        await using var host = await ConciergeTestHost.StartAsync(postgreSql, flushIntervalSeconds: 1);
+        var (stayId, handle) = await StartStayAsync(host);
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            host.ChatClient.ScriptedResponses.Enqueue(ProviderError());
+        }
+
+        var result = await handle.ExecuteUpdateAsync(wf => wf.SubmitTurnAsync(Turn(stayId, "exhausted", "Breakfast?", "web")));
+
+        Assert.Equal("I couldn't reach the concierge service just now. Please try again in a moment.", result.AssistantMessage);
+        Assert.Equal(3, host.ChatClient.Requests.Count);
+    }
+
+    private static ChatResponse ProviderError() =>
+        new(new ChatMessage(ChatRole.Assistant,
+            [new ErrorContent("upstream connect error or disconnect/reset before headers. reset reason: connection termination")]));
+
+    /// <summary>Accepted Updates in this run's history that never completed.</summary>
+    private static int OpenUpdates(WorkflowHistory history)
+    {
+        var accepted = history.Events
+            .Where(e => e.WorkflowExecutionUpdateAcceptedEventAttributes is not null)
+            .Select(e => e.WorkflowExecutionUpdateAcceptedEventAttributes.ProtocolInstanceId)
+            .ToHashSet(StringComparer.Ordinal);
+        accepted.ExceptWith(history.Events
+            .Where(e => e.WorkflowExecutionUpdateCompletedEventAttributes is not null)
+            .Select(e => e.WorkflowExecutionUpdateCompletedEventAttributes.Meta.UpdateId));
+        return accepted.Count;
+    }
+
     private static Task<Guid> SeedStayAsync(ConciergeTestHost host) =>
         host.SeedStayAsync(
             "Guest",

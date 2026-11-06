@@ -35,7 +35,8 @@ public sealed record ConciergeStayWorkflowInput(
     ConciergePlacePresentation? NearbyPlaces = null,
     ConciergePlacePresentation? PlaceClarification = null,
     IReadOnlyList<ConciergeVoiceRevision>? VoiceRevisions = null,
-    ConciergeVoiceRevisionCheckpoint? VoiceRevisionCheckpoint = null);
+    ConciergeVoiceRevisionCheckpoint? VoiceRevisionCheckpoint = null,
+    int IdleRolloverSeconds = 0);
 
 /// <summary>Activity-verified places, never model-supplied coordinates or identifiers.</summary>
 public sealed record ConciergeCanonicalPlace(
@@ -138,13 +139,61 @@ public sealed record ConciergeTranscriptTurn(
     string AssistantMessage,
     DateTimeOffset OccurredAtUtc,
     bool Interrupted = false,
-    bool Superseded = false);
+    bool Superseded = false,
+    ConciergeRideCard? RideCard = null);
 
 public sealed record ConciergeTurnResult(
     string TurnId,
     string AssistantMessage,
     long Sequence,
-    ConciergeEndChatFunctionCall? EndChatFunctionCall = null);
+    ConciergeEndChatFunctionCall? EndChatFunctionCall = null,
+    ConciergeRideCard? RideCard = null);
+
+/// <summary>
+/// Structured ride data a turn's tool result produced, for clients that draw a card beside the answer
+/// (the AG-UI page). Taken from the ride service's result, never from the model's wording. A snapshot as
+/// of the turn: later status changes arrive through the ride activity feed, not here.
+/// </summary>
+public sealed record ConciergeRideCard(string Kind, IReadOnlyList<ConciergeRideCardRide> Rides)
+{
+    /// <summary>A ride the guest just confirmed.</summary>
+    public const string Booked = "booked";
+
+    /// <summary>The guest's upcoming rides, read from ride history.</summary>
+    public const string Scheduled = "scheduled";
+
+    /// <summary>Keeps the turn, its transcript row and the AG-UI event small.</summary>
+    public const int MaxRides = 5;
+
+    // Value equality over the rides: a record compares lists by reference, so a card read back from
+    // the transcript row would never equal the one the turn first returned (retry receipts compare them).
+    public bool Equals(ConciergeRideCard? other) =>
+        other is not null
+        && StringComparer.Ordinal.Equals(Kind, other.Kind)
+        && Rides.SequenceEqual(other.Rides);
+
+    public override int GetHashCode()
+    {
+        var hash = new HashCode();
+        hash.Add(Kind, StringComparer.Ordinal);
+        foreach (var ride in Rides)
+        {
+            hash.Add(ride);
+        }
+
+        return hash.ToHashCode();
+    }
+}
+
+public sealed record ConciergeRideCardRide(
+    Guid RideId,
+    string Status,
+    string Pickup,
+    string Dropoff,
+    DateTimeOffset PickupAtUtc,
+    string? DriverName = null,
+    string? Car = null,
+    string? Plate = null);
 
 /// <summary>The model-generated client-side end-chat call forwarded to Deepgram.</summary>
 public sealed record ConciergeEndChatFunctionCall(string Id, string Name, string Arguments);
@@ -182,3 +231,7 @@ public sealed record FindTranscriptTurnRequest(Guid StayId, string TurnId);
 public sealed record MarkTranscriptTurnInterruptedRequest(Guid StayId, string TurnId);
 
 public sealed record MarkTranscriptTurnSupersededRequest(Guid StayId, string TurnId);
+
+public sealed record DeleteStayTranscriptRequest(Guid StayId);
+
+public sealed record PurgeStayRidesRequest(Guid GuestId, Guid StayId, DateOnly CheckoutDate);

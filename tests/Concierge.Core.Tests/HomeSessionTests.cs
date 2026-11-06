@@ -184,6 +184,61 @@ public sealed class HomeSessionTests
         Assert.True(harness.Get<bool>("chatEndedForInactivity"));
     }
 
+    [Fact]
+    public async Task CircuitLossDuringFirstRenderStopsWithoutFaulting()
+    {
+        await using var harness = new Harness();
+        harness.Set("ready", false);
+        harness.JavaScript.Disconnected.Add("conciergeChat.loadSession");
+
+        await harness.Call("OnAfterRenderAsync", true);
+
+        Assert.False(harness.Get<bool>("ready"));
+        Assert.DoesNotContain("conciergeChat.clearSession", harness.JavaScript.Calls);
+    }
+
+    [Fact]
+    public async Task CircuitLossWhileStoppingVoiceStillEndsTheChat()
+    {
+        await using var harness = new Harness();
+        harness.SetSession("current", Guid.NewGuid());
+        harness.Set("voiceMode", true);
+        harness.JavaScript.Disconnected.Add("conciergeVoice.stop");
+        var endCalls = 0;
+        harness.Service.End = _ =>
+        {
+            endCalls++;
+            return Task.CompletedTask;
+        };
+
+        await harness.Call("EndChatAsync");
+
+        Assert.Equal(1, endCalls);
+        Assert.True(harness.Get<bool>("chatEnded"));
+        Assert.Equal("disconnected", harness.Get<string>("voiceState"));
+    }
+
+    [Fact]
+    public async Task CircuitLossWhileMutingKeepsTheLastKnownMuteState()
+    {
+        await using var harness = new Harness();
+        harness.Set("voiceMuted", true);
+        harness.JavaScript.Disconnected.Add("conciergeVoice.setMuted");
+
+        await harness.Call("ToggleVoiceMuteAsync");
+
+        Assert.True(harness.Get<bool>("voiceMuted"));
+    }
+
+    [Fact]
+    public async Task ScriptFailuresStillPropagate()
+    {
+        await using var harness = new Harness();
+        harness.JavaScript.Failures["conciergeChat.loadTheme"] = new JSException("loadTheme failed");
+
+        await Assert.ThrowsAsync<JSException>(() => harness.Call("OnAfterRenderAsync", true));
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -502,6 +557,86 @@ public sealed class HomeSessionTests
         Assert.Equal("Keep draft", harness.Get<string>("draft"));
     }
 
+    [Fact]
+    public async Task StartOverClearsTheChatAndKeepsTheGuestSignedIn()
+    {
+        await using var harness = new Harness();
+        harness.SetSession("current", Guid.NewGuid());
+        harness.Set("turns", History("before-reset").Turns);
+        harness.Set("draft", "Unsent words");
+
+        await harness.Call("StartOverAsync");
+        Assert.True(harness.Get<bool>("showResetConfirmation"));
+        Assert.Equal(0, harness.Service.ResetCalls);
+
+        await harness.Call("ResetStayAsync");
+
+        Assert.Equal(1, harness.Service.ResetCalls);
+        Assert.Empty(harness.Get<List<ConciergeTranscriptTurn>>("turns"));
+        Assert.Equal(string.Empty, harness.Get<string>("draft"));
+        Assert.Equal("current", harness.Get<ChatSessionState>("session").Credential);
+        Assert.False(harness.Get<bool>("showResetConfirmation"));
+        Assert.False(harness.Get<bool>("isResetting"));
+        Assert.False(harness.Get<bool>("chatEnded"));
+        Assert.Contains("conciergeChat.saveSession", harness.JavaScript.Calls);
+        Assert.DoesNotContain("conciergeChat.clearSession", harness.JavaScript.Calls);
+    }
+
+    [Fact]
+    public async Task FailedStartOverKeepsTheChatAndShowsWhatDidNotHappen()
+    {
+        await using var harness = new Harness();
+        harness.SetSession("current", Guid.NewGuid());
+        harness.Set("turns", History("kept").Turns);
+        const string guidance = "Your rides were removed, but the conversation could not be cleared. Please try Start over again.";
+        harness.Service.Reset = _ => Task.FromException(new ConciergeApiException("reset_incomplete", guidance, 503));
+
+        await harness.Call("StartOverAsync");
+        await harness.Call("ResetStayAsync");
+
+        Assert.Equal(guidance, harness.Get<string>("resetError"));
+        Assert.True(harness.Get<bool>("showResetConfirmation"));
+        Assert.False(harness.Get<bool>("isResetting"));
+        Assert.Equal("kept", Assert.Single(harness.Get<List<ConciergeTranscriptTurn>>("turns")).TurnId);
+
+        await harness.Call("CancelResetStay");
+        Assert.False(harness.Get<bool>("showResetConfirmation"));
+        Assert.Null(harness.Get<string?>("resetError"));
+        Assert.Equal("current", harness.Get<ChatSessionState>("session").Credential);
+    }
+
+    [Fact]
+    public async Task UnauthorizedStartOverMarksTheSessionExpired()
+    {
+        await using var harness = new Harness();
+        harness.SetSession("current", Guid.NewGuid());
+        harness.Service.Reset = _ => Task.FromException(
+            new ConciergeApiException("unauthorized", "Authenticate again to continue.", 401));
+
+        await harness.Call("StartOverAsync");
+        await harness.Call("ResetStayAsync");
+
+        Assert.True(harness.Get<bool>("hasExpired"));
+        Assert.False(harness.Get<bool>("showResetConfirmation"));
+    }
+
+    [Fact]
+    public async Task StartOverInvalidatesOutstandingHistory()
+    {
+        await using var harness = new Harness();
+        harness.SetSession("current", Guid.NewGuid());
+        var response = new TaskCompletionSource<ConciergeHistoryResult>();
+        harness.Service.History = _ => response.Task;
+        var oldRead = harness.Call("LoadHistoryAndReconcileAsync", false);
+
+        await harness.Call("StartOverAsync");
+        await harness.Call("ResetStayAsync");
+        response.SetResult(History("late-turn"));
+        await oldRead;
+
+        Assert.Empty(harness.Get<List<ConciergeTranscriptTurn>>("turns"));
+    }
+
     /// <summary>Offers same-ID recovery after failed End discards an outstanding reply callback.</summary>
     [Theory]
     [InlineData(false, false)]
@@ -597,9 +732,9 @@ public sealed class HomeSessionTests
             .Where(element => element.Tag == "button")
             .ToArray();
 
-        Assert.Equal(4, controls.Length);
+        Assert.Equal(5, controls.Length);
         Assert.Equal(
-            ["Activity", "Mute microphone", "End voice", "End chat"],
+            ["Activity", "Mute microphone", "End voice", "Start over", "End chat"],
             controls.Select(element => element.Attributes.GetValueOrDefault("aria-label")));
         Assert.Equal("ride-activity-panel", controls[0].Attributes.GetValueOrDefault("aria-controls"));
         // The visible label switches Mute/Unmute, so the name carries state; aria-pressed would double it.
@@ -694,8 +829,15 @@ public sealed class HomeSessionTests
         var endVoice = Assert.Single(elements, element =>
             element.Tag == "button"
             && Equals(element.Attributes.GetValueOrDefault("aria-label"), "End voice"));
+        var startOver = Assert.Single(elements, element =>
+            element.Tag == "button"
+            && Equals(element.Attributes.GetValueOrDefault("aria-label"), "Start over"));
         Assert.True(endVoice.Index < endChat.Index);
-        Assert.Equal(endChat.Index, endVoice.EndIndex);
+        Assert.Equal(startOver.Index, endVoice.EndIndex);
+        // Start over sits directly between End voice and End chat among the toolbar's children.
+        var siblings = elements.Where(element => element.ParentIndex == controls.Index).ToList();
+        Assert.Equal(siblings.IndexOf(startOver) + 1, siblings.IndexOf(endChat));
+        Assert.Equal(controls.Index, startOver.ParentIndex);
         Assert.Equal(header.Index, headerActions.ParentIndex);
         Assert.Equal(headerActions.Index, controls.ParentIndex);
         Assert.Equal(controls.Index, endVoice.ParentIndex);
@@ -833,9 +975,9 @@ public sealed class HomeSessionTests
             .Where(element => element.Tag == "button")
             .ToArray();
 
-        Assert.Equal(4, controls.Length);
+        Assert.Equal(5, controls.Length);
         Assert.Equal(
-            ["Activity", action, "End voice", "End chat"],
+            ["Activity", action, "End voice", "Start over", "End chat"],
             controls.Select(element => element.Attributes.GetValueOrDefault("aria-label")));
         Assert.Equal("ride-activity-panel", controls[0].Attributes.GetValueOrDefault("aria-controls"));
         Assert.DoesNotContain(controls, element => Equals(element.Attributes.GetValueOrDefault("aria-label"), "Mute microphone"));
@@ -1253,6 +1395,121 @@ public sealed class HomeSessionTests
     private static ConciergeSessionResponse SessionResponse(string credential, Guid stay)
         => new(credential, DateTimeOffset.UtcNow.AddHours(1), stay, Guid.NewGuid());
 
+    /// <summary>A turn another client (a room device) adds to the stay shows up without a page action.</summary>
+    [Fact]
+    public async Task AnotherClientsTurnRefreshesHistoryInTheBackgroundAndCoalesces()
+    {
+        await using var harness = new Harness();
+        var stay = Guid.NewGuid();
+        var own = Guid.NewGuid();
+        harness.SetSession("credential", stay, own);
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reads = 0;
+        harness.Service.History = async _ =>
+        {
+            var read = Interlocked.Increment(ref reads);
+            if (read == 1) return new ConciergeHistoryResult([]);
+            if (read == 2) await gate.Task;
+            return History("device-turn");
+        };
+        await harness.Call("LoadHistoryAndReconcileAsync", false);
+        Assert.Equal(1, Volatile.Read(ref reads));
+        // A visible error and the idle state must survive a refresh the guest did not ask for.
+        harness.Set("model", harness.Get<ChatSessionModel>("model").SetTurnError("Your last message failed."));
+
+        var device = Guid.NewGuid();
+        harness.Transcripts.Notify(stay, device, StayTranscriptChangeKind.TurnsChanged);
+        await harness.WaitUntil(() => Volatile.Read(ref reads) == 2);
+        // Bursts while a read is in flight collapse into one more read.
+        harness.Transcripts.Notify(stay, device, StayTranscriptChangeKind.TurnsChanged);
+        harness.Transcripts.Notify(stay, device, StayTranscriptChangeKind.TurnsChanged);
+        await Task.Delay(50);
+        gate.SetResult();
+        await harness.WaitUntil(() => Volatile.Read(ref reads) == 3
+            && harness.Get<List<ConciergeTranscriptTurn>>("turns").Count == 1);
+        await Task.Delay(50);
+
+        Assert.Equal(3, Volatile.Read(ref reads));
+        Assert.Equal("device-turn", Assert.Single(harness.Get<List<ConciergeTranscriptTurn>>("turns")).TurnId);
+        Assert.Equal("Your last message failed.", harness.Get<string?>("turnError"));
+        Assert.False(harness.Get<bool>("isWorking"));
+    }
+
+    [Fact]
+    public async Task OwnSessionOtherStayAndStartedTurnNotificationsDoNotRefresh()
+    {
+        await using var harness = new Harness();
+        var stay = Guid.NewGuid();
+        var own = Guid.NewGuid();
+        harness.SetSession("credential", stay, own);
+        var reads = 0;
+        harness.Service.History = _ =>
+        {
+            Interlocked.Increment(ref reads);
+            return Task.FromResult(History("turn"));
+        };
+        await harness.Call("LoadHistoryAndReconcileAsync", false);
+
+        harness.Transcripts.Notify(stay, own, StayTranscriptChangeKind.TurnsChanged);
+        harness.Transcripts.Notify(Guid.NewGuid(), Guid.NewGuid(), StayTranscriptChangeKind.TurnsChanged);
+        // A started turn has nothing in history yet; only its TurnsChanged is worth a read.
+        harness.Transcripts.Notify(stay, Guid.NewGuid(), StayTranscriptChangeKind.TurnStarted, "Where is breakfast?");
+        await Task.Delay(100);
+
+        Assert.Equal(1, Volatile.Read(ref reads));
+    }
+
+    [Theory]
+    [InlineData("EndChatAsync")]
+    [InlineData("StartOverAsync")]
+    public async Task LeavingTheConversationStopsListeningForOtherClients(string action)
+    {
+        await using var harness = new Harness();
+        var stay = Guid.NewGuid();
+        harness.SetSession("credential", stay, Guid.NewGuid());
+        var reads = 0;
+        harness.Service.History = _ =>
+        {
+            Interlocked.Increment(ref reads);
+            return Task.FromResult(History("turn"));
+        };
+        await harness.Call("LoadHistoryAndReconcileAsync", false);
+
+        await harness.Call(action);
+        harness.Transcripts.Notify(stay, Guid.NewGuid(), StayTranscriptChangeKind.TurnsChanged);
+        await Task.Delay(100);
+
+        Assert.Equal(1, Volatile.Read(ref reads));
+    }
+
+    [Fact]
+    public async Task AnotherClientsResetEmptiesTheTranscriptAndRestartsTheRideFeed()
+    {
+        await using var harness = new Harness();
+        var stay = Guid.NewGuid();
+        harness.SetSession("credential", stay, Guid.NewGuid());
+        var cleared = false;
+        harness.Service.History = _ => Task.FromResult(Volatile.Read(ref cleared)
+            ? new ConciergeHistoryResult([])
+            : History("before-reset"));
+        var snapshots = 0;
+        harness.Service.RideSnapshot = _ =>
+        {
+            Interlocked.Increment(ref snapshots);
+            return Task.FromResult(new ConciergeRideActivitySnapshot(new ConciergeRideReadState(0, 0, 0), []));
+        };
+        await harness.Call("LoadHistoryAndReconcileAsync", false);
+        await harness.WaitUntil(() => Volatile.Read(ref snapshots) == 1);
+        Assert.Single(harness.Get<List<ConciergeTranscriptTurn>>("turns"));
+
+        Volatile.Write(ref cleared, true);
+        harness.Transcripts.Notify(stay, Guid.NewGuid(), StayTranscriptChangeKind.StayReset);
+
+        await harness.WaitUntil(() => harness.Get<List<ConciergeTranscriptTurn>>("turns").Count == 0
+            && Volatile.Read(ref snapshots) == 2);
+        Assert.Empty(harness.Get<List<ConciergeTranscriptTurn>>("turns"));
+    }
+
     private static ConciergeHistoryResult History(string id) =>
         new([new ConciergeTranscriptTurn(id, 1, "web", "Guest", "Reply", DateTimeOffset.UtcNow)]);
 
@@ -1311,6 +1568,7 @@ public sealed class HomeSessionTests
         public FakeService Service { get; } = new();
         public FakeJavaScript JavaScript { get; } = new();
         public VoiceSessionRegistry Voice { get; } = new(TimeProvider.System);
+        public StayTranscriptNotifier Transcripts { get; } = new(NullLogger<StayTranscriptNotifier>.Instance);
 
         /// <summary>Attaches Home without triggering implicit browser callbacks.</summary>
         public Harness()
@@ -1319,6 +1577,7 @@ public sealed class HomeSessionTests
             Set("JavaScript", JavaScript);
             Set("Logger", NullLogger<Home>.Instance);
             Set("VoiceSessions", Voice);
+            Set("TranscriptNotifier", Transcripts);
             Set("ready", true);
             componentId = renderer.Attach(home);
         }
@@ -1540,13 +1799,34 @@ public sealed class HomeSessionTests
     private sealed class FakeJavaScript : IJSRuntime
     {
         public List<string> Calls { get; } = [];
+        /// <summary>Identifiers that throw as if the Blazor Server circuit dropped mid-call.</summary>
+        public HashSet<string> Disconnected { get; } = new(StringComparer.Ordinal);
+        /// <summary>Identifiers that throw the given exception, e.g. a JSException from a script defect.</summary>
+        public Dictionary<string, Exception> Failures { get; } = new(StringComparer.Ordinal);
+        // BL0016 treats every member call on an IJSRuntime implementation as browser interop, including
+        // this fake's own helper. Nothing here crosses a circuit, so there is nothing to guard.
+#pragma warning disable BL0016
         /// <summary>Records browser interop with default cancellation.</summary>
         public ValueTask<TValue> InvokeAsync<TValue>(string identifier, object?[]? args) =>
-            InvokeAsync<TValue>(identifier, CancellationToken.None, args);
+            Respond<TValue>(identifier);
         /// <summary>Records browser interop and returns a deterministic scroll position.</summary>
-        public ValueTask<TValue> InvokeAsync<TValue>(string identifier, CancellationToken cancellationToken, object?[]? args)
+        public ValueTask<TValue> InvokeAsync<TValue>(string identifier, CancellationToken cancellationToken, object?[]? args) =>
+            Respond<TValue>(identifier);
+#pragma warning restore BL0016
+
+        private ValueTask<TValue> Respond<TValue>(string identifier)
         {
             Calls.Add(identifier);
+            if (Disconnected.Contains(identifier))
+            {
+                return ValueTask.FromException<TValue>(new JSDisconnectedException("Circuit disconnected."));
+            }
+
+            if (Failures.TryGetValue(identifier, out var failure))
+            {
+                return ValueTask.FromException<TValue>(failure);
+            }
+
             return ValueTask.FromResult(identifier == "conciergeChat.isNearBottom" ? (TValue)(object)true : default!);
         }
     }
@@ -1602,6 +1882,14 @@ public sealed class HomeSessionTests
         }
         /// <summary>Completes the interaction without external services.</summary>
         public Task EndAsync(string? bearerCredential, CancellationToken cancellationToken = default) => End(bearerCredential);
+        public Func<string?, Task> Reset { get; set; } = _ => Task.CompletedTask;
+        public int ResetCalls { get; private set; }
+        /// <summary>Counts reset requests and returns the arranged task.</summary>
+        public Task ResetAsync(string? bearerCredential, CancellationToken cancellationToken = default)
+        {
+            ResetCalls++;
+            return Reset(bearerCredential);
+        }
         /// <summary>Voice is outside these component tests.</summary>
         public Task<ConciergeVoiceAuthorization> AuthorizeVoiceAsync(string? bearerCredential, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();

@@ -271,7 +271,7 @@ public sealed class AIConfigurationTests
             ? Path.Combine(testOutput.Parent.Parent!.FullName, "Concierge.AppHost",
                 testOutput.Name, "Concierge.AppHost.dll")
             : Path.Combine(appHostDirectory, "bin", testOutput.Parent!.Name,
-                "net10.0/Concierge.AppHost.dll");
+                testOutput.Name, "Concierge.AppHost.dll");
         var start = new ProcessStartInfo("dotnet")
         {
             WorkingDirectory = appHostDirectory,

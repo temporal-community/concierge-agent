@@ -162,6 +162,7 @@ public sealed class AuthenticatedGuestContextTests(PostgreSqlFixture postgreSql)
                 environment.Client,
                 Options.Create(new ConciergePersistenceOptions()),
                 new VoiceSessionRegistry(TimeProvider.System),
+                new StayTranscriptNotifier(NullLogger<StayTranscriptNotifier>.Instance),
                 NullLogger<ConciergeService>.Instance);
             var credential = Base64Url.EncodeToString(RandomNumberGenerator.GetBytes(32));
 

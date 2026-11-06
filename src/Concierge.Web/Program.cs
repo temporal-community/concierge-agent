@@ -1,4 +1,6 @@
+using Concierge.Web.Agentic;
 using Concierge.Web.Components;
+using Microsoft.Agents.AI.Hosting.AGUI.AspNetCore;
 using Concierge.Web.Endpoints;
 using Concierge.Web.Services;
 using Concierge.Web.Voice;
@@ -52,6 +54,9 @@ builder.Services.AddOptions<ConciergePersistenceOptions>()
     .Validate(
         options => options.FlushBatchSize is >= 1 and <= ConciergePersistenceOptions.MaxFlushBatchSize,
         $"{ConciergePersistenceOptions.SectionName}:FlushBatchSize must be between 1 and {ConciergePersistenceOptions.MaxFlushBatchSize}.")
+    .Validate(
+        options => options.IdleRolloverSeconds is 0 or (>= 60 and <= 86400),
+        $"{ConciergePersistenceOptions.SectionName}:IdleRolloverSeconds must be 0 (off) or between 60 and 86400.")
     .ValidateOnStart();
 
 builder.Services.AddOptions<DeepgramVoiceOptions>()
@@ -66,7 +71,14 @@ builder.Services.AddOptions<DeepgramVoiceOptions>()
     .ValidateOnStart();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<VoiceSessionRegistry>();
+builder.Services.AddSingleton<StayTranscriptNotifier>();
+// Partial answer text from the model activity over Postgres LISTEN/NOTIFY (ADR 0015).
+builder.Services.AddSingleton<AnswerStreamListener>();
+builder.Services.AddHostedService(services => services.GetRequiredService<AnswerStreamListener>());
 builder.Services.AddScoped<IConciergeService, ConciergeService>();
+// PROTOTYPE (ADR 0014 phase 2): the stay workflow as an AG-UI agent, used by the /agentic page.
+builder.Services.AddAGUIServer();
+builder.Services.AddSingleton<AgenticLoopback>();
 builder.Services.Configure<RouteHandlerOptions>(options => options.ThrowOnBadRequest = false);
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
@@ -118,6 +130,7 @@ app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
 
 app.MapConciergeApi();
+app.MapAGUIServer(AgenticConcierge.EndpointPath, AgenticConcierge.CreateAgent);
 app.Map(VoiceRelayEndpoint.Path, VoiceRelayEndpoint.HandleAsync);
 app.MapDefaultEndpoints();
 

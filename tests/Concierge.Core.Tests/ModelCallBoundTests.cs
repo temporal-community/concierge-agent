@@ -391,6 +391,47 @@ public sealed class ModelCallBoundTests
     private static Temporalio.Activities.ActivityInfo AttemptStartedNow(TimeSpan startToClose) =>
         ActivityEnvironment.DefaultInfo with { StartedTime = DateTime.UtcNow, StartToCloseTimeout = startToClose };
 
+    [Fact]
+    public async Task AnErrorItemFromTheProviderIsAFailedCallStreamingOrNot()
+    {
+        var error = new ErrorContent("upstream connect error or disconnect/reset before headers") { ErrorCode = "server_error" };
+        using var client = Bounded(new ErrorItemClient(error), TimeSpan.FromSeconds(5), 1);
+
+        var streamed = await Assert.ThrowsAsync<ModelProviderErrorException>(async () =>
+        {
+            await foreach (var _ in client.GetStreamingResponseAsync([new ChatMessage(ChatRole.User, "Hello")]))
+            {
+            }
+        });
+        var whole = await Assert.ThrowsAsync<ModelProviderErrorException>(() =>
+            client.GetResponseAsync([new ChatMessage(ChatRole.User, "Hello")]));
+
+        Assert.Equal("The model provider returned an error instead of a reply (server_error): upstream connect error or disconnect/reset before headers", streamed.Message);
+        Assert.Equal(streamed.Message, whole.Message);
+        // The slot was released both times: a third call still gets one.
+        await Assert.ThrowsAsync<ModelProviderErrorException>(() => client.GetResponseAsync([new ChatMessage(ChatRole.User, "Hello")]));
+    }
+
+    private sealed class ErrorItemClient(ErrorContent error) : IChatClient
+    {
+        public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default) =>
+            Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, [error])));
+
+        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+            IEnumerable<ChatMessage> messages, ChatOptions? options = null,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            await Task.Yield();
+            yield return new ChatResponseUpdate(ChatRole.Assistant, [error]);
+        }
+
+        public object? GetService(Type serviceType, object? serviceKey = null) => null;
+
+        public void Dispose()
+        {
+        }
+    }
+
     private static BoundedChatClient Bounded(IChatClient inner, TimeSpan timeout, int maxConcurrency) =>
         new(inner, timeout, maxConcurrency);
 

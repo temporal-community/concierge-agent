@@ -1,0 +1,116 @@
+@using Concierge.Web.Services
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+
+@* Voice in the message input (MessageInput.LeadingActions), after the AgenticUI sample's VoiceControls:
+   the mic button starts and ends voice, with a ring that grows with the guest's voice; the speaker
+   button mutes spoken replies, with a ring that grows with the concierge's voice. voice.js sets --level
+   on the two meters every animation frame, so levels never cross the Blazor circuit. VoiceStatus shows
+   the state and what the guest said above the input. *@
+
+<div class="voice-input" data-state="@StateName">
+    <span class="voice-input__meter" @ref="micMeter">
+        <button type="button" class="voice-input__button voice-input__mic"
+                title="@MicLabel" aria-label="@MicLabel" aria-pressed="@(Voice?.Active == true)"
+                disabled="@MicDisabled" @onclick="OnMic">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Z" />
+                <path d="M19 11a7 7 0 0 1-14 0M12 18v3" />
+            </svg>
+        </button>
+    </span>
+
+    @if (Voice is { Mode: true, Active: true } active)
+    {
+        var label = active.SpeakerMuted ? "Speak replies aloud" : "Mute spoken replies";
+        <span class="voice-input__meter voice-input__meter--speaker" @ref="speakerMeter">
+            <button type="button"
+                    class="voice-input__button @(active.SpeakerMuted ? "voice-input__button--muted" : null)"
+                    title="@label" aria-label="@label" aria-pressed="@active.SpeakerMuted" @onclick="OnSpeaker">
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path d="M4 9v6h4l5 4V5L8 9H4Z" />
+                    @if (active.SpeakerMuted)
+                    {
+                        <path d="m17 9 5 6m0-6-5 6" />
+                    }
+                    else
+                    {
+                        <path d="M16.5 8.5a5 5 0 0 1 0 7" />
+                    }
+                </svg>
+            </button>
+        </span>
+    }
+
+</div>
+
+@code {
+    private ElementReference micMeter;
+    private ElementReference speakerMeter;
+    private bool speakerAttached;
+    private bool attached;
+
+    /// <summary>Null until the page has a verified session.</summary>
+    [Parameter]
+    public AgenticVoiceController? Voice { get; set; }
+
+    /// <summary>Whether a new session may start now (no turn in flight, no dialog open).</summary>
+    [Parameter]
+    public bool CanStart { get; set; }
+
+    /// <summary>The mic button was pressed: start, end, resume or reconnect, depending on the state.</summary>
+    [Parameter]
+    public EventCallback OnMic { get; set; }
+
+    [Parameter]
+    public EventCallback OnSpeaker { get; set; }
+
+    private string StateName => Voice is { Mode: true } voice ? voice.State : "idle";
+
+    private bool MicDisabled => Voice is null || (!Voice.Mode && !CanStart) || Voice.State == "connecting";
+
+    private string MicLabel => Voice switch
+    {
+        null or { Mode: false } => "Start voice",
+        { Active: true } => "End voice",
+        { State: "paused" } => "Resume voice",
+        _ => "Reconnect voice",
+    };
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // The speaker meter exists only while voice is live; attach again when it appears or goes.
+        var speakerShown = Voice is { Mode: true, Active: true };
+        if (attached && speakerShown == speakerAttached)
+        {
+            return;
+        }
+
+        attached = true;
+        speakerAttached = speakerShown;
+        await AttachAsync(micMeter, speakerShown ? speakerMeter : null);
+    }
+
+    private async Task AttachAsync(ElementReference? mic, ElementReference? speaker)
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("conciergeVoice.attachMeters", mic, speaker);
+        }
+        catch (Exception exception) when (exception is JSDisconnectedException or JSException or InvalidOperationException)
+        {
+            // No browser (prerendering) or it's gone; the meters are decoration.
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("conciergeVoice.detachMeters", micMeter);
+        }
+        catch (Exception exception) when (exception is JSDisconnectedException or JSException or InvalidOperationException)
+        {
+        }
+    }
+}

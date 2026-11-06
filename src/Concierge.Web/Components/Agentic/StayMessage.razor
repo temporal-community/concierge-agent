@@ -1,0 +1,61 @@
+@using Concierge.Web.Agentic
+@using Concierge.Web.Services
+@using Concierge.Web.Components.Shared
+@using Microsoft.AspNetCore.Components.AI
+@using Microsoft.Extensions.AI
+
+@* One message in Home's markup and styles, used through a BlockRenderer<RichContentBlock> inside
+   MessageList. Concierge answers go through Home's AssistantResponse (Markdig + HtmlSanitizer), so the
+   AG-UI page renders Markdown exactly as Home does; the stock MessageList shows it raw. *@
+
+@if (startsNewDay)
+{
+    <div class="date-separator">
+        <span>@hotelTime.ToString("MMM dd", System.Globalization.CultureInfo.InvariantCulture)</span>
+    </div>
+}
+<div class="message-row @(isGuest ? "guest-row" : "concierge-row")">
+    <div class="message-content">
+        <div class="message-meta">
+            <strong>@(isGuest ? "GUEST" : "CONCIERGE")</strong>
+            <time datetime="@hotelTime.ToString("O")">
+                @hotelTime.ToString("h:mm tt", System.Globalization.CultureInfo.InvariantCulture)
+            </time>
+        </div>
+        <div class="message-bubble @(isGuest ? "guest-bubble" : "concierge-bubble")">
+            @if (isGuest)
+            {
+                @Block.RawText
+            }
+            else
+            {
+                <AssistantResponse Text="@Block.RawText" />
+                @if (stamp.Interrupted)
+                {
+                    <span class="interrupted-indicator">Interrupted</span>
+                }
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired]
+    public RichContentBlock Block { get; set; } = default!;
+
+    [Parameter, EditorRequired]
+    public StayConversationThread Thread { get; set; } = default!;
+
+    private bool isGuest;
+    private bool startsNewDay;
+    private StayMessageStamp stamp = new(DateTimeOffset.UtcNow, false);
+    private DateTimeOffset hotelTime;
+
+    protected override void OnParametersSet()
+    {
+        isGuest = Block.Role == ChatRole.User;
+        stamp = Thread.StampFor(Block.Id, DateTimeOffset.UtcNow);
+        startsNewDay = Thread.StartsNewDay(Block.Id, ConciergeGuestUi.HotelTimeZone);
+        hotelTime = TimeZoneInfo.ConvertTime(stamp.OccurredAtUtc, ConciergeGuestUi.HotelTimeZone);
+    }
+}

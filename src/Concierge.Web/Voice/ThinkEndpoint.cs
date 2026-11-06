@@ -93,15 +93,29 @@ internal static class ThinkEndpoint
             .SetTag("concierge.voice.connection", connection.Number)
             .SetTag("concierge.voice.user_ordinal", request.UserOrdinal);
 
+        // ADR 0015 measurement spike, off by default: speak the model's partial text as it streams.
+        // Each message is the full text so far, so a request that joins a running turn catches up.
+        using var answerStream = services.GetRequiredService<IConfiguration>().GetValue<bool>(StreamThinkSetting)
+            ? services.GetService<AnswerStreamListener>()?.Subscribe(turnId)
+            : null;
+
         // The shared task outlives this request: a Deepgram abort or retry must not cancel or
         // resubmit admitted Temporal work. ConciergeService holds no disposable scoped state.
         var turn = session.JoinOrStart(turnId, () => concierge.SubmitVoiceTurnAsync(
             session.Stay, turnId, request.UserMessage, CancellationToken.None, enableEndChatFunction: true),
             request.UserMessage);
 
+        var created = services.GetRequiredService<TimeProvider>().GetUtcNow().ToUnixTimeSeconds();
+        StreamedThink? streamed = null;
         ConciergeTurnResult result;
         try
         {
+            if (answerStream is not null)
+            {
+                streamed = new StreamedThink(context, session, turnId, request.Model, created);
+                await streamed.FollowAsync(turn, answerStream.Reader, context.RequestAborted);
+            }
+
             result = await turn.WaitAsync(context.RequestAborted);
         }
         catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
@@ -111,6 +125,16 @@ internal static class ThinkEndpoint
                 + "the voice turn continues in Temporal.",
                 Stopwatch.GetElapsedTime(started).TotalMilliseconds, connection.Number, request.UserOrdinal, turnId);
             VoiceTelemetry.RecordThink(requestStarted, "caller_disconnected");
+            return;
+        }
+        catch (Exception exception) when (streamed?.Started == true && exception is not OperationCanceledException)
+        {
+            // Headers and text are already out; the guest heard part of an answer that never committed.
+            logger.LogWarning(
+                "Think streamed text for a voice turn that then failed. Cause types: {CauseTypes}.",
+                ConciergeDiagnostics.ExceptionTypeChain(exception));
+            await streamed.FinishAsync(null);
+            VoiceTelemetry.RecordThink(requestStarted, "failed");
             return;
         }
         catch (ConciergeApiException exception)
@@ -136,7 +160,16 @@ internal static class ThinkEndpoint
             "Think voice turn answered in {ElapsedMs:F0} ms (connection {ConnectionNumber}, user message {UserOrdinal}).",
             Stopwatch.GetElapsedTime(started).TotalMilliseconds, connection.Number, request.UserOrdinal);
 
-        var created = services.GetRequiredService<TimeProvider>().GetUtcNow().ToUnixTimeSeconds();
+        if (streamed?.Started == true)
+        {
+            var completed = await streamed.FinishAsync(result.EndChatFunctionCall is null ? result.AssistantMessage : null);
+            logger.LogInformation(
+                "Think streamed a voice turn (connection {ConnectionNumber}, user message {UserOrdinal}); committed answer {Outcome}.",
+                connection.Number, request.UserOrdinal, completed ? "extended the spoken text" : "differed from the spoken text");
+            VoiceTelemetry.RecordThink(requestStarted, "answered");
+            return;
+        }
+
         if (result.EndChatFunctionCall is { } endChatCall)
         {
             if (!StringComparer.Ordinal.Equals(endChatCall.Name, ConciergeEndChat.FunctionName)
@@ -166,6 +199,83 @@ internal static class ThinkEndpoint
         // binds playback to this accepted Temporal turn rather than inferring from its ordinal.
         await WriteRegisteredSseAsync(context, session, turnId, request.Model, created, result.AssistantMessage);
         VoiceTelemetry.RecordThink(requestStarted, "answered");
+    }
+
+    /// <summary>Config switch for the ADR 0015 voice streaming measurement. Off unless set to true.</summary>
+    public const string StreamThinkSetting = "Voice:StreamThink";
+
+    /// <summary>
+    /// Writes a voice turn's partial text as SSE content chunks while the turn runs (ADR 0015, measurement
+    /// only). Spoken text can't be taken back: when the committed answer doesn't extend it, nothing more
+    /// is sent and the mismatch is logged.
+    /// </summary>
+    private sealed class StreamedThink(HttpContext context, VoiceSession session, string turnId, string model, long created)
+    {
+        private readonly Concierge.Web.Agentic.StayWorkflowChatClient.StreamedText text = new();
+        private VoiceSession.ReplyRegistration? registration;
+
+        public bool Started => registration is not null;
+
+        public async Task FollowAsync(
+            Task<ConciergeTurnResult> turn,
+            System.Threading.Channels.ChannelReader<ConciergeAnswerStreamMessage> reader,
+            CancellationToken cancellationToken)
+        {
+            while (true)
+            {
+                var next = reader.WaitToReadAsync(cancellationToken).AsTask();
+                if (await Task.WhenAny(turn, next) == turn || !await next)
+                {
+                    return;
+                }
+
+                while (reader.TryRead(out var message))
+                {
+                    if (text.Extend(message) is { } delta)
+                    {
+                        await WriteAsync(ThinkRequest.SseContentFrame(turnId, model, created, delta));
+                    }
+                }
+            }
+        }
+
+        /// <summary>Sends the rest of <paramref name="answer"/> when it extends what was spoken, then ends the stream.</summary>
+        public async Task<bool> FinishAsync(string? answer)
+        {
+            var extends = answer is not null && answer.StartsWith(text.Text, StringComparison.Ordinal);
+            if (extends && answer!.Length > text.Text.Length)
+            {
+                await WriteAsync(ThinkRequest.SseContentFrame(turnId, model, created, answer[text.Text.Length..]));
+            }
+
+            await WriteAsync(ThinkRequest.SseStopFrames(turnId, model, created));
+            return extends;
+        }
+
+        private async Task WriteAsync(string frames)
+        {
+            if (registration is null)
+            {
+                // Register before Deepgram can receive any text, as for a whole answer.
+                registration = session.RegisterReplyForPlayback(turnId);
+                context.Response.StatusCode = StatusCodes.Status200OK;
+                context.Response.ContentType = "text/event-stream";
+                context.Response.Headers.CacheControl = "no-cache";
+                frames = ThinkRequest.SseRoleFrame(turnId, model, created) + frames;
+            }
+
+            try
+            {
+                await context.Response.WriteAsync(frames, context.RequestAborted);
+                await context.Response.Body.FlushAsync(context.RequestAborted);
+            }
+            catch
+            {
+                // Deepgram went away mid-answer; nothing more of this reply will play.
+                session.CancelReplyForPlayback(registration);
+                throw;
+            }
+        }
     }
 
     internal static async Task WriteRegisteredSseAsync(
@@ -445,6 +555,25 @@ internal sealed record ThinkRequest(
     {
         return new VoiceUtterance(voiceSessionId, connectionNumber, userOrdinal).TurnId(userMessage);
     }
+
+    public static string SseRoleFrame(string id, string model, long created) =>
+        ChunkFrame(id, model, created, new { role = "assistant" }, null);
+
+    public static string SseContentFrame(string id, string model, long created, string content) =>
+        ChunkFrame(id, model, created, new { content }, null);
+
+    public static string SseStopFrames(string id, string model, long created) =>
+        ChunkFrame(id, model, created, new { }, "stop") + "data: [DONE]\n\n";
+
+    private static string ChunkFrame(string id, string model, long created, object delta, string? finishReason) =>
+        "data: " + JsonSerializer.Serialize(new
+        {
+            id,
+            @object = "chat.completion.chunk",
+            created,
+            model,
+            choices = new[] { new { index = 0, delta, finish_reason = finishReason } },
+        }) + "\n\n";
 
     /// <summary>Assistant-role chunk, one content chunk, the stop chunk, then <c>[DONE]</c>.</summary>
     public static string SseFrames(string id, string model, long created, string answer)

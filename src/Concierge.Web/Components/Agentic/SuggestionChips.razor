@@ -1,0 +1,32 @@
+@using Concierge.Web.Services
+@using Microsoft.AspNetCore.Components.AI
+
+@* MessageList.EmptyContent: Home's starter questions as one-tap chips. Sends through the cascaded
+   AgentContext, the same path as MessageInput, so the turn goes over AG-UI like any typed message. *@
+
+<section class="agentic-suggestions" aria-labelledby="agentic-suggestions-title">
+    <h2 id="agentic-suggestions-title" class="agentic-suggestions__title">How can we help?</h2>
+    <div class="agentic-suggestions__chips">
+        @foreach (var suggestion in ConciergeGuestUi.Suggestions)
+        {
+            <button type="button" class="agentic-suggestion-chip" disabled="@(!CanSend)"
+                    @onclick="() => SendAsync(suggestion)">
+                @suggestion
+            </button>
+        }
+    </div>
+</section>
+
+@code {
+    [CascadingParameter]
+    public AgentContext? Context { get; set; }
+
+    private bool CanSend => Context?.Status == ConversationStatus.Idle;
+
+    private async Task SendAsync(string text)
+    {
+        // SendMessageAsync throws while a run is in flight; a double tap must not.
+        if (Context is not { Status: ConversationStatus.Idle } context) return;
+        await context.SendMessageAsync(text, CancellationToken.None);
+    }
+}

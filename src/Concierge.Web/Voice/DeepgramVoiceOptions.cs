@@ -14,8 +14,8 @@ public sealed class DeepgramVoiceOptions
     /// <summary>Speech-to-text model; Flux STT is sent with provider version v2.</summary>
     public string ListenModel { get; set; } = "flux-general-en";
 
-    /// <summary>Text-to-speech model; Aura TTS is sent with provider version v1.</summary>
-    public string SpeakModel { get; set; } = "aura-2-thalia-en";
+    /// <summary>Text-to-speech model; Flux TTS is sent with provider version v2.</summary>
+    public string SpeakModel { get; set; } = "flux-hannah-en";
 
     /// <summary>Minutes without speech before ending an otherwise idle chat.</summary>
     public int IdleTimeoutMinutes { get; set; } = 2;

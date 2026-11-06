@@ -22,6 +22,12 @@ internal sealed record ChatSessionModel(
     public static ChatSessionModel Initial { get; } =
         new(null, null, string.Empty, Guid.Empty, 0, [], false, false, false, false, false, null, null);
 
+    public bool ShowResetConfirmation { get; init; }
+
+    public bool IsResetting { get; init; }
+
+    public string? ResetError { get; init; }
+
     public bool HasEndContent => Draft.Length != 0 || Pending is not null;
 
     public bool IsCurrent(int version) => version == Version;
@@ -57,7 +63,10 @@ internal sealed record ChatSessionModel(
             HasExpired = false,
             ShowExpiredStrip = false,
             Session = null,
-            IsEnding = false
+            IsEnding = false,
+            ShowResetConfirmation = false,
+            IsResetting = false,
+            ResetError = null
         };
 
     public ChatSessionModel VerificationSucceeded(ConciergeSessionResponse response, DateTimeOffset now)
@@ -90,7 +99,10 @@ internal sealed record ChatSessionModel(
             IsEnding = false,
             ChatEnded = false,
             TurnError = null,
-            EndError = null
+            EndError = null,
+            ShowResetConfirmation = false,
+            IsResetting = false,
+            ResetError = null
         };
     }
 
@@ -109,7 +121,10 @@ internal sealed record ChatSessionModel(
             IsEnding = false,
             ChatEnded = false,
             TurnError = null,
-            EndError = null
+            EndError = null,
+            ShowResetConfirmation = false,
+            IsResetting = false,
+            ResetError = null
         };
 
     public ChatSessionModel ReconcileHistory(IReadOnlyList<ConciergeTranscriptTurn> history)
@@ -163,6 +178,8 @@ internal sealed record ChatSessionModel(
             HasExpired = true,
             ShowExpiredStrip = true,
             IsEnding = false,
+            ShowResetConfirmation = false,
+            IsResetting = false,
             TurnError = null
         };
 
@@ -213,7 +230,40 @@ internal sealed record ChatSessionModel(
             HasExpired = false,
             ShowEndConfirmation = false,
             IsEnding = false,
-            ChatEnded = true
+            ChatEnded = true,
+            ShowResetConfirmation = false,
+            IsResetting = false,
+            ResetError = null
+        };
+
+    public ChatSessionModel RequestResetConfirmation() =>
+        this with { ShowResetConfirmation = true, ResetError = null, ShowEndConfirmation = false };
+
+    public ChatSessionModel CancelReset() =>
+        this with { ShowResetConfirmation = false, ResetError = null };
+
+    /// <summary>Supersedes outstanding history refreshes so none can repaint the cleared chat.</summary>
+    public ChatSessionModel BeginReset() =>
+        this with { Version = Version + 1, IsResetting = true, ResetError = null };
+
+    public ChatSessionModel ResetFailed(string error) =>
+        this with { IsResetting = false, ResetError = error };
+
+    public ChatSessionModel FinishResetAttempt() =>
+        this with { IsResetting = false };
+
+    /// <summary>The server deleted the transcript, so local turns, the pending reply and the draft go too.</summary>
+    public ChatSessionModel CompleteReset() =>
+        this with
+        {
+            Turns = [],
+            Pending = null,
+            Draft = string.Empty,
+            Session = Session is null ? null : CloneSession(Session, null, string.Empty),
+            TurnError = null,
+            ShowResetConfirmation = false,
+            IsResetting = false,
+            ResetError = null
         };
 
     private static ChatSessionState CloneSession(

@@ -5,7 +5,38 @@
 <PageTitle>Hotel ZGY Concierge</PageTitle>
 
 <div class="page-shell" @onkeydown="HandlePageKeyDown">
-    @if (showEndConfirmation || chatEnded)
+    @if (showResetConfirmation)
+    {
+        <FocusPage Theme="@theme" ThemeChanged="ChangeThemeAsync">
+            <FocusCard Modifier="focus-card-end"
+                       TitleId="reset-state-title"
+                       Title="Start over?"
+                       DescriptionId="reset-state-description"
+                       Description="This deletes this stay's conversation and cancels its rides. You'll stay checked in."
+                       role="alertdialog"
+                       aria-modal="true"
+                       aria-labelledby="reset-state-title"
+                       aria-describedby="reset-state-description">
+                @if (!string.IsNullOrWhiteSpace(resetError))
+                {
+                    <div class="inline-error end-error" role="alert">
+                        <span class="error-symbol" aria-hidden="true">!</span>
+                        <span>@resetError</span>
+                    </div>
+                }
+
+                <button class="primary-button focus-card-action" type="button"
+                        @onclick="ResetStayAsync" disabled="@isResetting">
+                    @(isResetting ? "Starting over…" : "Start over")
+                </button>
+                <button class="secondary-button focus-card-action focus-card-secondary-action" type="button"
+                        @onclick="CancelResetStay" disabled="@isResetting">
+                    Keep chatting
+                </button>
+            </FocusCard>
+        </FocusPage>
+    }
+    else if (showEndConfirmation || chatEnded)
     {
         <FocusPage Theme="@theme" ThemeChanged="ChangeThemeAsync">
             <FocusCard Modifier="focus-card-end"
@@ -168,6 +199,13 @@
                                 <span>End voice</span>
                             </button>
                         }
+                        <button class="voice-end-voice-button" type="button" aria-label="Start over"
+                                @onclick="StartOverAsync" disabled="@(isEnding || isResetting || isWorking || hasExpired)">
+                            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                <path d="M4 4v5h5M4.6 15a8 8 0 1 0 1.8-8.3L4 9" />
+                            </svg>
+                            <span>Start over</span>
+                        </button>
                         <button class="end-chat-button voice-end-chat-button" type="button" aria-label="End chat"
                                 @onclick="EndChatAsync" disabled="@isEnding">
                             <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">

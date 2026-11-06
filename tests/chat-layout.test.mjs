@@ -13,7 +13,7 @@ const { chromium } = await import(process.env.PLAYWRIGHT_MODULE
     : "playwright");
 const appCss = readFileSync(new URL("../src/Concierge.Web/wwwroot/css/app.css", import.meta.url), "utf8");
 const scopedCss = readFileSync(new URL(
-    "../src/Concierge.Web/obj/Debug/net10.0/scopedcss/bundle/Concierge.Web.styles.css",
+    "../src/Concierge.Web/obj/Debug/net11.0/scopedcss/bundle/Concierge.Web.styles.css",
     import.meta.url), "utf8");
 const scope = scopedCss.match(/\.ride-activity-drawer\[(b-[\w]+)\]/)?.[1];
 assert.ok(scope, "Build Concierge.Web first to generate the actual drawer scoped CSS");

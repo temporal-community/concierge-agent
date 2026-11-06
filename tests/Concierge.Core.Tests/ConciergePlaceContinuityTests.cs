@@ -99,6 +99,54 @@ public sealed class ConciergePlaceContinuityTests
         Assert.Null(selected);
     }
 
+    private static readonly ConciergeRidePlace BookedStreetArt =
+        new("Street Art, North Miami Avenue", 25.7995499, -80.1946837);
+
+    [Theory]
+    [InlineData("Street Art, North Miami Avenue", true)]
+    [InlineData("  street art, north miami avenue ", true)]
+    [InlineData("Street Art", false)]
+    [InlineData("Street Art (North Miami Avenue)", false)]
+    public void ExpiredNearbyFallsBackToExactRideOfferDropoff(string model, bool bound)
+    {
+        Assert.True(ConciergePlaceContinuity.TrySelect(model, null, null, [null, BookedStreetArt], out var selected));
+        Assert.Equal(bound, selected is not null);
+        if (bound)
+        {
+            Assert.Equal(new ConciergeCanonicalPlace(BookedStreetArt.Name, null, null,
+                BookedStreetArt.Latitude, BookedStreetArt.Longitude), selected);
+        }
+    }
+
+    [Fact]
+    public void RetainedPlacesTakePrecedenceOverRideOfferDropoffs()
+    {
+        var nearby = ConciergePlaceContinuity.Create([First], Now.AddMinutes(10), 0, 1);
+        var sameLabelElsewhere = new ConciergeRidePlace(First.Name, 1, 1);
+        Assert.True(ConciergePlaceContinuity.TrySelect(First.Name, nearby, null, [sameLabelElsewhere], out var selected));
+        Assert.Equal(First, selected);
+    }
+
+    [Fact]
+    public void PendingAndConsumedOffersForOneEndpointBindButConflictingEndpointsClarify()
+    {
+        Assert.True(ConciergePlaceContinuity.TrySelect(
+            BookedStreetArt.Name, null, null, [BookedStreetArt, BookedStreetArt], out var selected));
+        Assert.NotNull(selected);
+
+        Assert.False(ConciergePlaceContinuity.TrySelect(
+            BookedStreetArt.Name, null, null, [BookedStreetArt, BookedStreetArt with { Latitude = 25.9 }], out selected));
+        Assert.Null(selected);
+    }
+
+    [Fact]
+    public void InvalidRideOfferCoordinatesAreNeverTrusted()
+    {
+        Assert.True(ConciergePlaceContinuity.TrySelect(
+            BookedStreetArt.Name, null, null, [BookedStreetArt with { Latitude = double.NaN }], out var selected));
+        Assert.Null(selected);
+    }
+
     [Fact]
     public void StateAndModelProjectionAreBoundedWithoutCuttingSerializedJson()
     {

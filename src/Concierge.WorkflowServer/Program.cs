@@ -54,6 +54,9 @@ builder.Services.AddSingleton(_ =>
     return dataSourceBuilder.Build();
 });
 builder.Services.AddSingleton<DatabaseMigrator>();
+// Partial answer text for the web chat over Postgres LISTEN/NOTIFY (ADR 0015).
+builder.Services.AddSingleton<AnswerStreamPublisher>();
+builder.Services.AddHostedService(services => services.GetRequiredService<AnswerStreamPublisher>());
 builder.Services.AddSingleton<EmbeddingModelIdentityStore>();
 builder.Services.AddOptions<SetupOptions>()
     .Bind(builder.Configuration.GetSection(SetupOptions.SectionName));
@@ -104,6 +107,7 @@ builder.Services.AddHostedTemporalWorker(TemporalWorkerConnection.TaskQueue)
     .AddWorkflow<ConciergeStayWorkflow>()
     .AddWorkflow<HotelSetupWorkflow>()
     .AddScopedActivities<ConciergeTranscriptActivities>()
+    .AddScopedActivities<ConciergeStayResetActivities>()
     .AddScopedActivities<HotelKnowledgeActivities>()
     // Session activities run as Standalone Activities started directly by Web.
     .AddScopedActivities<ConciergeSessionActivities>()

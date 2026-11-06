@@ -80,6 +80,36 @@ internal static class ConciergePlaceContinuity
         return matches.Length <= 1;
     }
 
+    /// <summary>
+    /// As <see cref="TrySelect(string, ConciergePlacePresentation?, ConciergePlacePresentation?, out ConciergeCanonicalPlace?)"/>,
+    /// then falls back to ride-offer drop-offs. Offers outlive the nearby window, and their labels
+    /// (e.g. a Places result such as "Street Art, North Miami Avenue") may not be geocodable text,
+    /// so re-offering the same destination must reuse the route-verified coordinates.
+    /// </summary>
+    internal static bool TrySelect(
+        string modelDestination,
+        ConciergePlacePresentation? nearby, ConciergePlacePresentation? clarification,
+        IEnumerable<ConciergeRidePlace?> rideDropoffs,
+        out ConciergeCanonicalPlace? selected)
+    {
+        if (!TrySelect(modelDestination, nearby, clarification, out selected)) return false;
+        if (selected is not null) return true;
+
+        // Exact label only: an offer's label is the resolved name, so a partial name could
+        // silently bind a different branch that the guest never confirmed.
+        var matches = rideDropoffs.OfType<ConciergeRidePlace>()
+            .Where(place => !string.IsNullOrWhiteSpace(place.Name)
+                && double.IsFinite(place.Latitude) && place.Latitude is >= -90 and <= 90
+                && double.IsFinite(place.Longitude) && place.Longitude is >= -180 and <= 180
+                && string.Equals(modelDestination.Trim(), place.Name.Trim(), StringComparison.OrdinalIgnoreCase))
+            .DistinctBy(place => (place.Latitude, place.Longitude))
+            .Select(place => new ConciergeCanonicalPlace(
+                ConciergeToolResultInterpreter.Limit(place.Name.Trim(), 200), null, null, place.Latitude, place.Longitude))
+            .ToArray();
+        selected = matches.Length == 1 ? matches[0] : null;
+        return matches.Length <= 1;
+    }
+
     private static bool Alias(string text, ConciergeCanonicalPlace place) =>
         string.Equals(text.Trim(), place.Name, StringComparison.OrdinalIgnoreCase)
         || place.Address is not null && (string.Equals(text.Trim(), place.Address, StringComparison.OrdinalIgnoreCase)

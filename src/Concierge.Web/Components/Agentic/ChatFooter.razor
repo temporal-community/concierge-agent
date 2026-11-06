@@ -1,0 +1,40 @@
+@using Microsoft.AspNetCore.Components.AI
+
+@* MessageList.Footer in Home's styles: the room device's question while the desk works on it, Home's
+   "Preparing a reply…" while this page's own run streams, and Home's send-error card with Retry. *@
+
+@if (!string.IsNullOrWhiteSpace(DeviceQuestion))
+{
+    <div class="reply-pending agentic-device-question" role="status" aria-live="polite">
+        <span class="pending-dot" aria-hidden="true"></span>
+        The room device is asking: “@DeviceQuestion”
+    </div>
+}
+@if (Context.Status == ConversationStatus.Streaming)
+{
+    <div class="reply-pending" role="status" aria-live="polite">
+        <span class="pending-dot" aria-hidden="true"></span>
+        Preparing a reply…
+    </div>
+}
+else if (Context.Status == ConversationStatus.Error)
+{
+    <div class="turn-error" role="alert">
+        <div>
+            <strong>We couldn’t send that message.</strong>
+            <p>Check your connection, then try again.</p>
+        </div>
+        <button type="button" class="secondary-button" @onclick="RetryAsync">Try again</button>
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired]
+    public AgentContext Context { get; set; } = default!;
+
+    /// <summary>Another client's question that has no answer yet, or null.</summary>
+    [Parameter]
+    public string? DeviceQuestion { get; set; }
+
+    private Task RetryAsync() => Context.RetryAsync(CancellationToken.None);
+}

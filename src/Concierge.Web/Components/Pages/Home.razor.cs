@@ -11,16 +11,9 @@ namespace Concierge.Web.Components.Pages;
 
 public partial class Home : ComponentBase, IAsyncDisposable
 {
-    private static readonly TimeZoneInfo HotelTimeZone =
-        TimeZoneInfo.FindSystemTimeZoneById("America/New_York");
+    private static readonly TimeZoneInfo HotelTimeZone = ConciergeGuestUi.HotelTimeZone;
 
-    private static readonly string[] Suggestions =
-    [
-        "What time is breakfast?",
-        "How do I connect to Wi-Fi?",
-        "What amenities are available?",
-        "Can you recommend a nearby restaurant?"
-    ];
+    private static readonly IReadOnlyList<string> Suggestions = ConciergeGuestUi.Suggestions;
 
     private readonly List<RideActivityEntry> rideActivityEntries = [];
     private readonly HashSet<string> rideActivityReadEntryKeys = new(StringComparer.Ordinal);
@@ -41,6 +34,9 @@ public partial class Home : ComponentBase, IAsyncDisposable
     [Inject]
     private VoiceSessionRegistry VoiceSessions { get; set; } = default!;
 
+    [Inject]
+    private StayTranscriptNotifier TranscriptNotifier { get; set; } = default!;
+
     private ChatSessionModel model = ChatSessionModel.Initial;
     private ElementReference transcriptElement;
     private DotNetObjectReference<Home>? scrollReference;
@@ -59,6 +55,9 @@ public partial class Home : ComponentBase, IAsyncDisposable
     private bool chatEnded => model.ChatEnded;
     private string? turnError => model.TurnError;
     private string? endError => model.EndError;
+    private bool showResetConfirmation => model.ShowResetConfirmation;
+    private bool isResetting => model.IsResetting;
+    private string? resetError => model.ResetError;
     private int sessionVersion => model.Version;
     private string lastName = string.Empty;
     private string roomNumber = string.Empty;
@@ -92,6 +91,20 @@ public partial class Home : ComponentBase, IAsyncDisposable
     private IDisposable? voiceTurnSubscription;
     private readonly Dictionary<string, VoiceTurnProgress> voicePendingTranscripts = new(StringComparer.Ordinal);
     private HistoryRefreshBatch? historyRefreshBatch;
+    // Turns another client adds to this stay (another tab, a room device) arrive through this.
+    private IDisposable? transcriptSubscription;
+    private int transcriptSubscriptionVersion = -1;
+    private BackgroundHistoryRefresh? backgroundHistoryRefresh;
+    // Read tickets, so a slow background read cannot replace a newer history already shown.
+    private long historyReadsStarted;
+    private long historyReadApplied;
+
+    private sealed class BackgroundHistoryRefresh(int sessionVersion)
+    {
+        public int SessionVersion { get; } = sessionVersion;
+        public bool Requested { get; set; } = true;
+        public Task? RefreshTask { get; set; }
+    }
 
     private sealed class HistoryRefreshBatch(int sessionVersion, bool replayPending)
     {
@@ -116,11 +129,11 @@ public partial class Home : ComponentBase, IAsyncDisposable
     };
 
     private bool TranscriptVisible =>
-        ready && session?.Credential is not null && !showEndConfirmation && !chatEnded;
+        ready && session?.Credential is not null && !showEndConfirmation && !showResetConfirmation && !chatEnded;
 
     /// <summary>Keeps the header control group identical outside the voice chat, including the end-of-chat views.</summary>
     private string HeaderControlsClass =>
-        voiceMode && !showEndConfirmation && !chatEnded
+        voiceMode && !showEndConfirmation && !showResetConfirmation && !chatEnded
             ? "voice-header-controls has-voice-mode"
             : "voice-header-controls";
 
@@ -170,19 +183,20 @@ public partial class Home : ComponentBase, IAsyncDisposable
         var currentVersion = sessionVersion;
         if (firstRender)
         {
-            theme = await JavaScript.InvokeAsync<string>("conciergeChat.loadTheme");
-            if (!IsCurrentSession(currentVersion)) return;
-            await JavaScript.InvokeVoidAsync("conciergeChat.applyTheme", theme);
-            if (!IsCurrentSession(currentVersion)) return;
-            var storedSession = await JavaScript.InvokeAsync<ChatSessionState?>("conciergeChat.loadSession");
-            if (!IsCurrentSession(currentVersion)) return;
+            var (themeLoaded, storedTheme) = await TryInvokeAsync<string>("conciergeChat.loadTheme");
+            if (!themeLoaded || !IsCurrentSession(currentVersion)) return;
+            theme = storedTheme!;
+            if (!await TryInvokeVoidAsync("conciergeChat.applyTheme", theme)
+                || !IsCurrentSession(currentVersion)) return;
+            var (sessionLoaded, storedSession) = await TryInvokeAsync<ChatSessionState?>("conciergeChat.loadSession");
+            if (!sessionLoaded || !IsCurrentSession(currentVersion)) return;
             model = model.Restore(storedSession, DateTimeOffset.UtcNow);
             if (storedSession is not null)
             {
                 if (string.IsNullOrWhiteSpace(storedSession.Credential))
                 {
-                    await JavaScript.InvokeVoidAsync("conciergeChat.clearSession");
-                    if (!IsCurrentSession(currentVersion)) return;
+                    if (!await TryInvokeVoidAsync("conciergeChat.clearSession")
+                        || !IsCurrentSession(currentVersion)) return;
                 }
             }
 
@@ -203,7 +217,7 @@ public partial class Home : ComponentBase, IAsyncDisposable
             if (wiredCredential is not null)
             {
                 wiredCredential = null;
-                await JavaScript.InvokeVoidAsync("conciergeChat.unwireTranscript");
+                await TryInvokeVoidAsync("conciergeChat.unwireTranscript");
             }
             return;
         }
@@ -211,8 +225,8 @@ public partial class Home : ComponentBase, IAsyncDisposable
         if (scrollAfterRender)
         {
             scrollAfterRender = false;
-            await JavaScript.InvokeVoidAsync("conciergeChat.scrollToBottom", transcriptElement);
-            if (!IsCurrentSession(currentVersion) || !TranscriptVisible) return;
+            if (!await TryInvokeVoidAsync("conciergeChat.scrollToBottom", transcriptElement)
+                || !IsCurrentSession(currentVersion) || !TranscriptVisible) return;
             showNewMessage = false;
             transcriptNearBottom = true;
         }
@@ -223,7 +237,7 @@ public partial class Home : ComponentBase, IAsyncDisposable
             scrollReference ??= DotNetObjectReference.Create(this);
             wiredCredential = session!.Credential;
             wiredVersion = currentVersion;
-            await JavaScript.InvokeVoidAsync(
+            await TryInvokeVoidAsync(
                 "conciergeChat.wireTranscript",
                 transcriptElement,
                 scrollReference,
@@ -234,7 +248,7 @@ public partial class Home : ComponentBase, IAsyncDisposable
     private async Task ChangeThemeAsync(ChangeEventArgs args)
     {
         theme = args.Value?.ToString() is "light" or "dark" ? args.Value!.ToString()! : "system";
-        await JavaScript.InvokeVoidAsync("conciergeChat.applyTheme", theme);
+        await TryInvokeVoidAsync("conciergeChat.applyTheme", theme);
     }
 
     private async Task VerifyAsync()
@@ -362,10 +376,12 @@ public partial class Home : ComponentBase, IAsyncDisposable
 
         isWorking = pending is not null;
         model = model.SetTurnError(null);
+        var ticket = ++historyReadsStarted;
         try
         {
             var history = await Concierge.ReadHistoryAsync(credential);
             if (!IsCurrentSession(currentVersion)) return false;
+            historyReadApplied = Math.Max(historyReadApplied, ticket);
             var pendingBeforeReconciliation = pending;
             model = model.ReconcileHistory(history.Turns);
             foreach (var turn in history.Turns) voicePendingTranscripts.Remove(turn.TurnId);
@@ -444,6 +460,8 @@ public partial class Home : ComponentBase, IAsyncDisposable
         && !hasExpired
         && !isEnding
         && !showEndConfirmation
+        && !isResetting
+        && !showResetConfirmation
         && session?.Credential is not null;
 
     private async Task StartTurnAsync(string message, bool clearDraft)
@@ -455,10 +473,10 @@ public partial class Home : ComponentBase, IAsyncDisposable
             return;
         }
 
-        var nearBottom = await JavaScript.InvokeAsync<bool>(
+        var (connected, nearBottom) = await TryInvokeAsync<bool>(
             "conciergeChat.isNearBottom",
             transcriptElement);
-        if (!IsCurrentSession(currentVersion) || !CanSend) return;
+        if (!connected || !IsCurrentSession(currentVersion) || !CanSend) return;
         transcriptNearBottom = nearBottom;
 
         model = model.StartTurn(new PendingTurnState(
@@ -559,13 +577,14 @@ public partial class Home : ComponentBase, IAsyncDisposable
         if (voiceMode)
         {
             // An expired credential must not leave the microphone open; the server revokes the bearer on close.
-            _ = JavaScript.InvokeVoidAsync("conciergeVoice.stop").AsTask().ContinueWith(
+            _ = TryInvokeVoidAsync("conciergeVoice.stop").ContinueWith(
                 static task => _ = task.Exception, TaskContinuationOptions.OnlyOnFaulted);
         }
 
         voiceMode = false;
         voiceSessionId = null;
         StopWatchingVoiceRelay();
+        StopTranscriptSubscription();
         await ResetRideActivityAsync();
         model = model.MarkExpired();
         isWorking = false;
@@ -581,7 +600,6 @@ public partial class Home : ComponentBase, IAsyncDisposable
         verificationError = null;
         isWorking = false;
         isVerifying = false;
-        StateHasChanged();
     }
 
     private async Task VerifyStayAgain()
@@ -609,15 +627,47 @@ public partial class Home : ComponentBase, IAsyncDisposable
         await PersistSessionAsync();
     }
 
+    // A lost circuit has no browser storage left to write; callers continue their server-side work.
     private Task PersistSessionAsync() =>
         session is null
             ? Task.CompletedTask
-            : JavaScript.InvokeVoidAsync("conciergeChat.saveSession", session).AsTask();
+            : TryInvokeVoidAsync("conciergeChat.saveSession", session);
+
+    // Blazor Server drops the circuit when the tab closes or the network blips, and any JS call in
+    // flight then throws JSDisconnectedException. There is no browser left to update, so callers get
+    // false and decide whether to stop or finish their server-side work instead of faulting the
+    // circuit. JSException and interop timeouts still propagate: those are defects, not disconnects.
+    private async Task<bool> TryInvokeVoidAsync(string identifier, params object?[]? args)
+    {
+        try
+        {
+            await JavaScript.InvokeVoidAsync(identifier, args);
+            return true;
+        }
+        catch (JSDisconnectedException)
+        {
+            return false;
+        }
+    }
+
+    /// <inheritdoc cref="TryInvokeVoidAsync"/>
+    private async Task<(bool Connected, T? Value)> TryInvokeAsync<T>(string identifier, params object?[]? args)
+    {
+        try
+        {
+            return (true, await JavaScript.InvokeAsync<T>(identifier, args));
+        }
+        catch (JSDisconnectedException)
+        {
+            return (false, default);
+        }
+    }
 
     private async Task EndChatAsync()
     {
         // The guest is leaving the conversation; voice must not keep listening behind the dialog.
         CloseActivity();
+        StopTranscriptSubscription();
         await StopRideActivityFeedAsync();
         await StopVoiceAsync("Voice stopped.");
         if (!model.HasEndContent)
@@ -661,6 +711,7 @@ public partial class Home : ComponentBase, IAsyncDisposable
 
         await StopVoiceAsync("Voice stopped.");
         CloseActivity();
+        StopTranscriptSubscription();
         await StopRideActivityFeedAsync();
         model = model.BeginEnd();
         var currentVersion = sessionVersion;
@@ -737,6 +788,90 @@ public partial class Home : ComponentBase, IAsyncDisposable
         }
     }
 
+    private async Task StartOverAsync()
+    {
+        if (session?.Credential is null || isResetting || isEnding)
+        {
+            return;
+        }
+
+        // Nothing should keep listening or streaming behind the confirmation dialog.
+        CloseActivity();
+        StopTranscriptSubscription();
+        await StopRideActivityFeedAsync();
+        await StopVoiceAsync("Voice stopped.");
+        voiceMode = false;
+        voiceSessionId = null;
+        StopWatchingVoiceRelay();
+        model = model.RequestResetConfirmation();
+    }
+
+    private async Task CancelResetStay()
+    {
+        model = model.CancelReset();
+        if (!hasExpired && session?.Credential is { } credential)
+        {
+            await StartRideActivityFeedAsync(sessionVersion, credential);
+        }
+    }
+
+    private async Task ResetStayAsync()
+    {
+        if (session?.Credential is null || isResetting)
+        {
+            return;
+        }
+
+        model = model.BeginReset();
+        var currentVersion = sessionVersion;
+        var credential = session.Credential;
+        isWorking = false;
+        try
+        {
+            await Concierge.ResetAsync(credential);
+            if (!IsCurrentSession(currentVersion)) return;
+            await ResetRideActivityAsync();
+            voicePendingTranscripts.Clear();
+            model = model.CompleteReset();
+            suggestionsExpanded = false;
+            await PersistSessionAsync();
+        }
+        catch (ConciergeApiException exception)
+        {
+            if (!IsCurrentSession(currentVersion)) return;
+            if (IsUnauthorized(exception))
+            {
+                model = model.CancelReset();
+                await MarkExpiredAsync();
+                return;
+            }
+
+            model = model.ResetFailed(ApiMessage(exception, "The stay could not be reset. Please try again."));
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            if (!IsCurrentSession(currentVersion)) return;
+            model = model.ResetFailed("The stay could not be reset because the concierge service is unavailable.");
+        }
+        finally
+        {
+            if (IsCurrentSession(currentVersion))
+            {
+                if (isResetting)
+                {
+                    model = model.FinishResetAttempt();
+                }
+
+                // After success the dialog is gone and the feed resumes from the reset stream;
+                // after a failure it resumes once the guest chooses Keep chatting.
+                if (!showResetConfirmation && !hasExpired && session?.Credential is { } activeCredential)
+                {
+                    await StartRideActivityFeedAsync(currentVersion, activeCredential);
+                }
+            }
+        }
+    }
+
     private async Task CompleteEndAsync()
     {
         await ResetRideActivityAsync();
@@ -752,7 +887,7 @@ public partial class Home : ComponentBase, IAsyncDisposable
         lastName = string.Empty;
         roomNumber = string.Empty;
         isWorking = false;
-        await JavaScript.InvokeVoidAsync("conciergeChat.clearSession");
+        await TryInvokeVoidAsync("conciergeChat.clearSession");
     }
 
     private bool CanStartVoice => CanSend && !voiceMode;
@@ -799,14 +934,15 @@ public partial class Home : ComponentBase, IAsyncDisposable
         StopWatchingVoiceRelay();
         voiceState = "connecting";
         voiceMessage = null;
-        await JavaScript.InvokeVoidAsync("conciergeVoice.start", session.Credential, voiceSessionId, voiceReference);
+        await TryInvokeVoidAsync("conciergeVoice.start", session.Credential, voiceSessionId, voiceReference);
     }
 
-    private Task ResumeVoiceAsync() => JavaScript.InvokeVoidAsync("conciergeVoice.resume").AsTask();
+    private Task ResumeVoiceAsync() => TryInvokeVoidAsync("conciergeVoice.resume");
 
     private async Task ToggleVoiceMuteAsync()
     {
-        voiceMuted = await JavaScript.InvokeAsync<bool>("conciergeVoice.setMuted", !voiceMuted);
+        var (connected, muted) = await TryInvokeAsync<bool>("conciergeVoice.setMuted", !voiceMuted);
+        if (connected) voiceMuted = muted;
     }
 
     private async Task StopVoiceAsync(string? message)
@@ -819,7 +955,9 @@ public partial class Home : ComponentBase, IAsyncDisposable
 
         voiceMuted = false;
         StopWatchingVoiceRelay();
-        await JavaScript.InvokeVoidAsync("conciergeVoice.stop");
+        // A lost circuit already closed the page's voice socket; callers such as EndChatAsync still
+        // need the local state cleared so they can finish ending the chat server-side.
+        await TryInvokeVoidAsync("conciergeVoice.stop");
         voiceState = "disconnected";
         voiceMessage = message;
     }
@@ -1133,6 +1271,7 @@ public partial class Home : ComponentBase, IAsyncDisposable
 
     private async Task StartRideActivityFeedAsync(int version, string credential)
     {
+        EnsureTranscriptSubscription(version);
         if (StringComparer.Ordinal.Equals(rideActivityCredential, credential)
             && rideActivityStreamTask is not null)
         {
@@ -1370,6 +1509,7 @@ public partial class Home : ComponentBase, IAsyncDisposable
         disposed = true;
         voiceIdleWarning = false;
         StopWatchingVoiceRelay();
+        StopTranscriptSubscription();
         await ResetRideActivityAsync();
         model = model.InvalidateOutstandingWork();
         if (voiceReference is not null)
@@ -1403,6 +1543,152 @@ public partial class Home : ComponentBase, IAsyncDisposable
         scrollReference?.Dispose();
     }
 
+    private void EnsureTranscriptSubscription(int version)
+    {
+        if (session is not { } current
+            || (transcriptSubscription is not null && transcriptSubscriptionVersion == version))
+        {
+            return;
+        }
+
+        StopTranscriptSubscription();
+        var ownSessionId = current.SessionId;
+        transcriptSubscriptionVersion = version;
+        transcriptSubscription = TranscriptNotifier.Subscribe(current.StayId, change =>
+        {
+            // This page's own turns already reconcile through their own submit and voice flows; a turn
+            // that has only started has nothing in history yet.
+            if (change.SourceSessionId == ownSessionId || change.Kind == StayTranscriptChangeKind.TurnStarted) return;
+            _ = InvokeAsync(() => OnStayChangedByAnotherClientAsync(version, change.Kind)).ContinueWith(
+                static task => _ = task.Exception, TaskContinuationOptions.OnlyOnFaulted);
+        });
+    }
+
+    private void StopTranscriptSubscription()
+    {
+        transcriptSubscription?.Dispose();
+        transcriptSubscription = null;
+        transcriptSubscriptionVersion = -1;
+    }
+
+    private async Task OnStayChangedByAnotherClientAsync(int version, StayTranscriptChangeKind kind)
+    {
+        if (!IsCurrentSession(version) || session?.Credential is not { } credential)
+        {
+            return;
+        }
+
+        if (kind == StayTranscriptChangeKind.StayReset)
+        {
+            // Another credential started the stay over: its ride rows and pending speech are gone too.
+            voicePendingTranscripts.Clear();
+            await ResetRideActivityAsync();
+            if (!IsCurrentSession(version)) return;
+            await RefreshHistoryInBackgroundAsync(version);
+            if (IsCurrentSession(version) && !hasExpired && !chatEnded && !isEnding
+                && !showEndConfirmation && !showResetConfirmation)
+            {
+                await StartRideActivityFeedAsync(version, credential);
+            }
+
+            return;
+        }
+
+        await RefreshHistoryInBackgroundAsync(version);
+    }
+
+    /// <summary>
+    /// Re-reads history for a change another client made, without the foreground refresh's side
+    /// effects: the busy state, a visible turn error, suggestions and the load-error banner are left
+    /// alone. Joins a foreground refresh already running for this session, otherwise coalesces.
+    /// </summary>
+    private Task RefreshHistoryInBackgroundAsync(int version)
+    {
+        if (historyRefreshBatch is { } foreground && foreground.SessionVersion == version)
+        {
+            foreground.Requested = true;
+            return foreground.RefreshTask ?? Task.CompletedTask;
+        }
+
+        if (backgroundHistoryRefresh is { } running && running.SessionVersion == version)
+        {
+            running.Requested = true;
+            return running.RefreshTask ?? Task.CompletedTask;
+        }
+
+        var refresh = new BackgroundHistoryRefresh(version);
+        backgroundHistoryRefresh = refresh;
+        refresh.RefreshTask = DrainBackgroundHistoryAsync(refresh);
+        return refresh.RefreshTask;
+    }
+
+    private async Task DrainBackgroundHistoryAsync(BackgroundHistoryRefresh refresh)
+    {
+        // Keep task assignment visible before a synchronously-completing fake/API read can finish.
+        await Task.Yield();
+        try
+        {
+            while (refresh.Requested && IsCurrentSession(refresh.SessionVersion))
+            {
+                refresh.Requested = false;
+                await ReadHistoryInBackgroundOnceAsync(refresh.SessionVersion);
+            }
+        }
+        finally
+        {
+            if (ReferenceEquals(backgroundHistoryRefresh, refresh))
+            {
+                backgroundHistoryRefresh = null;
+            }
+        }
+    }
+
+    private async Task ReadHistoryInBackgroundOnceAsync(int version)
+    {
+        var credential = IsCurrentSession(version) ? session?.Credential : null;
+        if (credential is null)
+        {
+            return;
+        }
+
+        var ticket = ++historyReadsStarted;
+        try
+        {
+            var history = await Concierge.ReadHistoryAsync(credential);
+            if (!IsCurrentSession(version) || ticket < historyReadApplied) return;
+            historyReadApplied = ticket;
+
+            var before = TranscriptSignature();
+            var pendingBeforeReconciliation = pending;
+            model = model.ReconcileHistory(history.Turns);
+            foreach (var turn in history.Turns) voicePendingTranscripts.Remove(turn.TurnId);
+            if (pendingBeforeReconciliation is not null && pending is null)
+            {
+                await PersistSessionAsync();
+                if (!IsCurrentSession(version)) return;
+            }
+
+            if (TranscriptSignature() != before)
+            {
+                await FinishTranscriptChangeAsync();
+            }
+        }
+        catch (ConciergeApiException exception) when (IsUnauthorized(exception))
+        {
+            if (IsCurrentSession(version)) await MarkExpiredAsync();
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // Background only: the transcript stays as it is and the next change or action re-reads it.
+            Logger.LogInformation(
+                "Background history refresh failed. Cause types: {CauseTypes}.",
+                ConciergeDiagnostics.ExceptionTypeChain(exception));
+        }
+    }
+
+    private (int Count, string? LastTurnId, int Interrupted) TranscriptSignature() =>
+        (turns.Count, turns.Count > 0 ? turns[^1].TurnId : null, turns.Count(turn => turn.Interrupted));
+
     private async Task FinishTranscriptChangeAsync()
     {
         if (transcriptNearBottom)
@@ -1426,8 +1712,8 @@ public partial class Home : ComponentBase, IAsyncDisposable
             return;
         }
 
-        await JavaScript.InvokeVoidAsync("conciergeChat.scrollToBottom", transcriptElement);
-        if (!IsCurrentSession(currentVersion) || !TranscriptVisible) return;
+        if (!await TryInvokeVoidAsync("conciergeChat.scrollToBottom", transcriptElement)
+            || !IsCurrentSession(currentVersion) || !TranscriptVisible) return;
         showNewMessage = false;
         transcriptNearBottom = true;
     }

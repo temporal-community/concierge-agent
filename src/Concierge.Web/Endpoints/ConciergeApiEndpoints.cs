@@ -61,6 +61,20 @@ public static class ConciergeApiEndpoints
                     nameof(IConciergeService.EndAsync),
                     logger));
 
+        api.MapPost("/reset", async (
+            IConciergeService concierge,
+            HttpContext context,
+            ILogger<IConciergeService> logger) =>
+                await ExecuteNoContentAsync(
+                    async () =>
+                    {
+                        await concierge.ResetAsync(
+                            GetBearerCredential(context),
+                            context.RequestAborted);
+                    },
+                    nameof(IConciergeService.ResetAsync),
+                    logger));
+
         return endpoints;
     }
 

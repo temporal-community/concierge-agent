@@ -95,6 +95,56 @@ public sealed class VoiceInterruptionTimingTests
         Assert.Equal("{}", Encoding.UTF8.GetString(remaining.Data));
     }
 
+    // Regression: the worklet acknowledges every 512 rendered samples (four 128-sample quanta) and
+    // each ack used to release exactly one 480-sample frame. Once Deepgram had delivered a long
+    // reply, only acks woke the sender, so the browser lead shrank 32 samples per ack until playback
+    // starved (~6 s in): jittery audio and rapid speaking/listening toggles.
+    [Fact]
+    public async Task EachAckRefillsTheFullPlaybackLeadForAlreadyDeliveredSpeech()
+    {
+        const int frameSamples = 480;
+        const int ackSamples = 512;
+        const int leadSamples = 24_000 * 380 / 1000;
+        const int totalFrames = 500; // 10 s of 24 kHz speech, all delivered before playback starts.
+        var queue = new PlaybackQueue(totalFrames + 1);
+        var pacer = new PlaybackPacer(leadSamples);
+        for (var frame = 0; frame < totalFrames; frame++)
+        {
+            Assert.True(queue.TryEnqueue(new PlaybackItem(false, new byte[frameSamples * 2])));
+        }
+
+        long sent = 0;
+        using var stop = new CancellationTokenSource();
+        var sender = Task.Run(async () =>
+        {
+            while (Interlocked.Read(ref sent) < (long)totalFrames * frameSamples)
+            {
+                var item = await queue.DequeueAsync(pacer, stop.Token);
+                Interlocked.Add(ref sent, item.Data.Length / 2);
+            }
+        });
+
+        Assert.True(SpinWait.SpinUntil(
+            () => Interlocked.Read(ref sent) == leadSamples / frameSamples * frameSamples,
+            TimeSpan.FromSeconds(1)));
+        long played = 0;
+        while (played + ackSamples <= Interlocked.Read(ref sent))
+        {
+            played += ackSamples;
+            Assert.True(pacer.Acknowledge(played));
+            queue.Signal();
+            var refilled = SpinWait.SpinUntil(
+                () => Interlocked.Read(ref sent) - played > leadSamples - frameSamples
+                    || Interlocked.Read(ref sent) == (long)totalFrames * frameSamples,
+                TimeSpan.FromSeconds(1));
+            Assert.True(refilled,
+                $"After {played} played samples the browser held only {Interlocked.Read(ref sent) - played} unplayed samples.");
+        }
+
+        Assert.Equal((long)totalFrames * frameSamples, Interlocked.Read(ref sent));
+        await sender.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
     [Fact]
     public void PlaybackLeadIsBoundedAndOnlyValidCumulativeAcksFreeCapacity()
     {

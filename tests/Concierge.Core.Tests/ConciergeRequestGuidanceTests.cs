@@ -154,6 +154,7 @@ public sealed class ConciergeRequestGuidanceTests
             client,
             Options.Create(new ConciergePersistenceOptions()),
             new Concierge.Web.Voice.VoiceSessionRegistry(TimeProvider.System),
+            new StayTranscriptNotifier(NullLogger<StayTranscriptNotifier>.Instance),
             NullLogger<ConciergeService>.Instance);
 
     private static void AssertInvalid(ConciergeApiException error, string message)

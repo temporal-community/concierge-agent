@@ -43,6 +43,12 @@ public interface IConciergeActionToolBackend
         string rideId,
         AIFunctionArguments arguments,
         CancellationToken cancellationToken);
+    /// <summary>Deletes every ride of the verified stay; throws unless the ride service confirms.</summary>
+    Task PurgeStayRidesAsync(
+        Guid guestId,
+        Guid stayId,
+        DateOnly checkoutDate,
+        CancellationToken cancellationToken);
 }
 
 public sealed class ConciergeActionToolService(
@@ -622,6 +628,28 @@ public sealed class ConciergeActionToolService(
                 [],
                 ConfirmedCancellationRideId: id),
             JsonOptions);
+    }
+
+    public async Task PurgeStayRidesAsync(
+        Guid guestId,
+        Guid stayId,
+        DateOnly checkoutDate,
+        CancellationToken cancellationToken)
+    {
+        if (guestId == Guid.Empty || stayId == Guid.Empty || checkoutDate == default)
+        {
+            throw new ArgumentException("A verified guest, stay, and checkout date are required to purge rides.");
+        }
+
+        using var message = new HttpRequestMessage(HttpMethod.Post, $"/stays/{stayId:D}/rides/purge");
+        AddVerifiedScope(message, new VerifiedRideIdentity(guestId, stayId, checkoutDate));
+        using var response = await RideClient().SendAsync(message, cancellationToken);
+        if (response.StatusCode != HttpStatusCode.NoContent)
+        {
+            // Status only: ride-service error bodies are not echoed into workflow history.
+            throw new InvalidOperationException(
+                $"The ride service did not confirm the stay ride purge (HTTP {(int)response.StatusCode}).");
+        }
     }
 
     private HttpClient RideClient() =>

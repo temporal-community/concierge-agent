@@ -248,7 +248,7 @@ public sealed class ThinkEndpointTests : IDisposable
     }
 
     [Fact]
-    public void DeepgramSettingsUseFluxListenAndAuraSpeakDefaultsAndDeferEndChat()
+    public void DeepgramSettingsUseFluxListenAndFluxSpeakDefaultsAndDeferEndChat()
     {
         using var settings = JsonDocument.Parse(VoiceAgentSettings.Build(
             new DeepgramVoiceOptions(),
@@ -268,18 +268,19 @@ public sealed class ThinkEndpointTests : IDisposable
         Assert.Equal("flux-general-en", listen.GetProperty("model").GetString());
         Assert.Equal("v2", listen.GetProperty("version").GetString());
         var speak = agent.GetProperty("speak").GetProperty("provider");
-        Assert.Equal("aura-2-thalia-en", speak.GetProperty("model").GetString());
-        Assert.Equal("v1", speak.GetProperty("version").GetString());
+        Assert.Equal("flux-hannah-en", speak.GetProperty("model").GetString());
+        Assert.Equal("v2", speak.GetProperty("version").GetString());
         Assert.Equal(1.0, speak.GetProperty("speed").GetDouble());
     }
 
     [Fact]
-    public void DeepgramNovaOverrideAndAuraDefaultKeepTheV1ProviderContract()
+    public void DeepgramNovaAndAuraOverridesKeepTheV1ProviderContract()
     {
         using var settings = JsonDocument.Parse(VoiceAgentSettings.Build(
             new DeepgramVoiceOptions
             {
                 ListenModel = "nova-3",
+                SpeakModel = "aura-2-thalia-en",
             },
             new Uri("https://think.example/v1/chat/completions"),
             "opaque-bearer",
@@ -476,6 +477,82 @@ public sealed class ThinkEndpointTests : IDisposable
         await AssertOpenAIError(response, HttpStatusCode.Conflict, "invalid_request_error", "turn_conflict");
     }
 
+    /// <summary>
+    /// ADR 0015 measurement spike (Voice:StreamThink): partial text goes to Deepgram as SSE content
+    /// chunks while the turn runs, then the rest of the committed answer.
+    /// </summary>
+    [Fact]
+    public async Task WithStreamThinkPartialTextIsSentWhileTheTurnRuns()
+    {
+        var (streaming, client, listener) = StreamingThink();
+        using var _ = streaming;
+        using var __ = client;
+        var connection = streaming.Services.GetRequiredService<VoiceSessionRegistry>().Open(Stay, null);
+        var answer = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        concierge.Answer = _ => answer.Task;
+        var turnId = ThinkRequest.TurnId(connection.Session.Id, connection.Number, 1, "Pool?");
+
+        var request = new HttpRequestMessage(HttpMethod.Post, Path) { Content = Json(Chat(("user", "Pool?"))) };
+        request.Headers.TryAddWithoutValidation("Authorization", "Bearer " + connection.Bearer);
+        var sending = client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+        await concierge.FirstSubmission.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        listener.Dispatch(ConciergeAnswerStream.Write(new ConciergeAnswerStreamMessage(turnId, "1:1", 0, "The pool ")));
+        using var response = await sending.WaitAsync(TimeSpan.FromSeconds(10));
+        listener.Dispatch(ConciergeAnswerStream.Write(new ConciergeAnswerStreamMessage(turnId, "1:1", 1, "The pool opens at ")));
+        await Task.Delay(100);
+        answer.SetResult("The pool opens at 8 a.m.");
+
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.Equal(["The pool ", "opens at ", "8 a.m."], ContentDeltas(body));
+        Assert.EndsWith("data: [DONE]\n\n", body, StringComparison.Ordinal);
+        Assert.Contains(logs.Entries, entry => entry.Message.Contains("committed answer extended the spoken text", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task WithStreamThinkADifferentCommittedAnswerAddsNothingAndIsLogged()
+    {
+        var (streaming, client, listener) = StreamingThink();
+        using var _ = streaming;
+        using var __ = client;
+        var connection = streaming.Services.GetRequiredService<VoiceSessionRegistry>().Open(Stay, null);
+        var answer = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        concierge.Answer = _ => answer.Task;
+        var turnId = ThinkRequest.TurnId(connection.Session.Id, connection.Number, 1, "Weather?");
+
+        var request = new HttpRequestMessage(HttpMethod.Post, Path) { Content = Json(Chat(("user", "Weather?"))) };
+        request.Headers.TryAddWithoutValidation("Authorization", "Bearer " + connection.Bearer);
+        var sending = client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+        await concierge.FirstSubmission.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        listener.Dispatch(ConciergeAnswerStream.Write(new ConciergeAnswerStreamMessage(turnId, "1:1", 0, "Let me check")));
+        using var response = await sending.WaitAsync(TimeSpan.FromSeconds(10));
+        answer.SetResult("Rain, 82°F.");
+
+        Assert.Equal(["Let me check"], ContentDeltas(await response.Content.ReadAsStringAsync()));
+        Assert.Contains(logs.Entries, entry => entry.Message.Contains("committed answer differed from the spoken text", StringComparison.Ordinal));
+    }
+
+    private (WebApplicationFactory<ConciergeService> Factory, HttpClient Client, AnswerStreamListener Listener) StreamingThink()
+    {
+        var listener = new AnswerStreamListener("Host=unused", Microsoft.Extensions.Logging.Abstractions.NullLogger<AnswerStreamListener>.Instance);
+        var streaming = factory.WithWebHostBuilder(builder =>
+        {
+            builder.UseSetting(ThinkEndpoint.StreamThinkSetting, "true");
+            builder.ConfigureServices(services =>
+            {
+                services.RemoveAll<AnswerStreamListener>();
+                services.AddSingleton(listener);
+            });
+        });
+        return (streaming, streaming.CreateClient(new() { BaseAddress = new Uri("https://hotel.example") }), listener);
+    }
+
+    private static string[] ContentDeltas(string body) =>
+        [.. body.Split("\n\n", StringSplitOptions.RemoveEmptyEntries)
+            .Where(frame => frame.StartsWith("data: {", StringComparison.Ordinal))
+            .Select(frame => JsonDocument.Parse(frame["data: ".Length..]).RootElement.GetProperty("choices")[0].GetProperty("delta"))
+            .Where(delta => delta.TryGetProperty("content", out _))
+            .Select(delta => delta.GetProperty("content").GetString()!)];
+
     private Task<HttpResponseMessage> PostAsync(HttpContent content, string bearer) =>
         SendAsync(content, "Bearer " + bearer);
 
@@ -593,6 +670,9 @@ public sealed class ThinkEndpointTests : IDisposable
             throw new NotSupportedException();
         /// <summary>Not used by the Think handler.</summary>
         public Task EndAsync(string? bearerCredential, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+        /// <summary>Not used by the Think handler.</summary>
+        public Task ResetAsync(string? bearerCredential, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
         /// <summary>Not used by the Think handler.</summary>
         public Task MarkVoiceTurnInterruptedAsync(

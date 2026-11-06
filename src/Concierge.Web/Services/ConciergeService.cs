@@ -17,6 +17,7 @@ public sealed class ConciergeService(
     ITemporalClient temporalClient,
     IOptions<ConciergePersistenceOptions> persistenceOptions,
     VoiceSessionRegistry voiceSessions,
+    StayTranscriptNotifier transcriptNotifier,
     ILogger<ConciergeService> logger) : IConciergeService
 {
     private static readonly TimeSpan InitialRideStreamRetryDelay = TimeSpan.FromMilliseconds(250);
@@ -141,6 +142,7 @@ public sealed class ConciergeService(
                 ConciergeWorkflowNames.MarkTurnInterruptedUpdate,
                 [new ConciergeTurnInterruption(turnId)],
                 UpdateOptions(cancellationToken));
+            transcriptNotifier.Notify(session.StayId, session.SessionId, StayTranscriptChangeKind.TurnsChanged);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -161,13 +163,20 @@ public sealed class ConciergeService(
         {
             var workflow = await GetStayWorkflowAsync(session, cancellationToken);
             var options = UpdateOptions(cancellationToken);
+            // Lets another open page show the question while the desk is still working on it.
+            transcriptNotifier.Notify(
+                session.StayId, session.SessionId, StayTranscriptChangeKind.TurnStarted, request.UserMessage);
             // Generated RPC IDs let both retries and revisions reach the workflow's TurnId fence.
-            return await workflow.ExecuteUpdateAsync<ConciergeTurnResult>(
+            var result = await workflow.ExecuteUpdateAsync<ConciergeTurnResult>(
                 ConciergeWorkflowNames.SubmitTurnUpdate,
                 [new ConciergeTurnSubmission(
                 request.TurnId, request.UserMessage, request.Channel, session.VerifiedGuest, enableEndChatFunction,
                 authenticatedVoice ? VoiceUtterance.FromTurnId(request.TurnId, request.UserMessage) : null)],
                 options);
+            // Other open pages for this stay (another tab, a room device's guest) show it without
+            // reloading. An exact retry that joins an admitted turn notifies again; pages coalesce.
+            transcriptNotifier.Notify(session.StayId, session.SessionId, StayTranscriptChangeKind.TurnsChanged);
+            return result;
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -504,6 +513,31 @@ public sealed class ConciergeService(
         }
     }
 
+    /// <inheritdoc/>
+    public async Task ResetAsync(
+        string? bearerCredential,
+        CancellationToken cancellationToken = default)
+    {
+        var session = await AuthenticateAsync(bearerCredential, cancellationToken);
+        RequireVerifiedGuest(session);
+        // A voice turn admitted after the reset would otherwise speak from the cleared context.
+        voiceSessions.EndSession(session.SessionId, VoiceRevocation.Reset);
+        try
+        {
+            var workflow = await GetStayWorkflowAsync(session, cancellationToken);
+            await workflow.ExecuteUpdateAsync(
+                ConciergeWorkflowNames.ResetStayUpdate,
+                [session.VerifiedGuest!],
+                UpdateOptions(cancellationToken));
+            // Other credentials for the stay no longer keep a stale transcript until they reload (ADR 0010).
+            transcriptNotifier.Notify(session.StayId, session.SessionId, StayTranscriptChangeKind.StayReset);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException and not ConciergeApiException)
+        {
+            throw MapTemporalFailure(exception, nameof(ResetAsync));
+        }
+    }
+
     private async Task<ConciergeSessionContext> AuthenticateAsync(
         string? bearerCredential,
         CancellationToken cancellationToken)
@@ -616,7 +650,8 @@ public sealed class ConciergeService(
                     session.EligibilityDeadlineUtc,
                     persistenceOptions.Value.FlushIntervalSeconds,
                     TranscriptFlushBatchSize: persistenceOptions.Value.FlushBatchSize,
-                    VerifiedGuest: session.VerifiedGuest),
+                    VerifiedGuest: session.VerifiedGuest,
+                    IdleRolloverSeconds: persistenceOptions.Value.IdleRolloverSeconds),
             ],
             new WorkflowOptions(workflowId, TemporalWorkerConnection.TaskQueue)
             {
@@ -785,6 +820,11 @@ public sealed class ConciergeService(
                     "The turn identifier was already used.",
                     StatusCodes.Status409Conflict),
                 ConciergeWorkflowNames.StayExpiredErrorType => Unauthorized(),
+                // Workflow-authored guidance that says which part of the reset did not happen.
+                ConciergeWorkflowNames.ResetIncompleteErrorType => new ConciergeApiException(
+                    "reset_incomplete",
+                    failure.Message,
+                    StatusCodes.Status503ServiceUnavailable),
                 _ => Unavailable(),
             }
             : Unavailable();

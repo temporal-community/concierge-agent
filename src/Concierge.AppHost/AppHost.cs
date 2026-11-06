@@ -14,6 +14,11 @@ var rides = postgres.AddDatabase("rides");
 var temporal = builder.AddTemporalDevContainer("temporal", options =>
 {
     options.Namespace = "default";
+    // Each ride-feed subscriber holds one Workflow Streams poll Update, and an abandoned poll (closed
+    // tab, restarted Web) stays in flight until the stay continues-as-new. Temporal's default of 10
+    // in-flight Updates per workflow refuses every turn once 10 accumulate. Workflow Streams targets
+    // "tens of subscribers", so allow that; the stay's periodic continue-as-new bounds the rest.
+    options.DynamicConfigValues.Add("history.maxInFlightUpdates=50");
 })
 .WithDataVolume("concierge-temporal-data");
 
@@ -75,6 +80,8 @@ ConfigureAIProvider(builder, workflowServer, "Embeddings", "foundry-embeddings-a
 
 var web = builder.AddProject<Projects.Concierge_Web>("web")
     .WithReference(temporal)
+    // LISTEN only: partial answer text from the model activity (ADR 0015).
+    .WithReference(concierge)
     .WithEnvironment("Deepgram__ApiKey", deepgramApiKey)
     .WaitFor(temporal)
     .WaitFor(workflowServer)
@@ -88,6 +95,15 @@ var thinkTunnel = builder.AddDevTunnel("think-tunnel")
 web.WithEnvironment(
     "THINK_PUBLIC_URL",
     thinkTunnel.GetEndpoint(web.GetEndpoint("think")));
+
+// Opt-in: publishes the guest UI and /api/concierge/* for clients that cannot reach localhost,
+// such as phones or hardware on another network. Guest verification (last name + room) is the
+// only gate, so it stays off unless a demo needs it.
+if (bool.TryParse(builder.Configuration["RemoteAccess:PublicTunnel"], out var publicTunnel) && publicTunnel)
+{
+    builder.AddDevTunnel("api-tunnel")
+        .WithReference(web.GetEndpoint("https"), allowAnonymous: true);
+}
 
 builder.Build().Run();
 

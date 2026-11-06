@@ -237,6 +237,51 @@ public sealed class ConciergeActionToolWorkflowTests(PostgreSqlFixture postgreSq
         await ReplayAsync(await handle.FetchHistoryAsync());
     }
 
+    // Reproduces a live stay: a Places-only label ("Street Art, North Miami Avenue") was booked from
+    // a nearby search, then re-offered after the nearby window lapsed. Without the verified endpoint
+    // the label went to the geocoder, which cannot resolve it ("I couldn't identify the destination").
+    [Fact]
+    public async Task ReofferingBookedDestinationAfterNearbyWindowReusesVerifiedCoordinates()
+    {
+        await using var host = await ConciergeTestHost.StartAsync(postgreSql);
+        var (stayId, handle) = await StartStayAsync(host);
+        host.ChatClient.ScriptedResponses.Enqueue(ToolCall(
+            "nearby-ride",
+            ConciergeToolDefinitions.FindNearbyPlaces,
+            new Dictionary<string, object?> { ["category"] = "pharmacy", ["forRideProposal"] = true }));
+        host.ChatClient.ScriptedResponses.Enqueue(ToolCall(
+            "propose-pharmacy",
+            ConciergeToolDefinitions.ProposeRide,
+            new Dictionary<string, object?> { ["dropoff"] = "Scripted Pharmacy", ["immediate"] = true }));
+        await SubmitAsync(host, handle, stayId, "propose-pharmacy", "Book me a ride to the nearest pharmacy.");
+        host.ChatClient.ScriptedResponses.Enqueue(ToolCall(
+            "confirm-pharmacy", ConciergeToolDefinitions.ConfirmRide, new Dictionary<string, object?>()));
+        await SubmitAsync(host, handle, stayId, "confirm-pharmacy", "Yes, book it.");
+
+        // Nearby results are retained for six turns after the search turn.
+        for (var turn = 0; turn < 5; turn++)
+        {
+            await SubmitAsync(host, handle, stayId, $"filler-{turn}", $"What time is breakfast? ({turn})");
+        }
+
+        var bookedLabel = "Scripted Pharmacy, Miami Beach, Florida, United States of America";
+        host.ChatClient.ScriptedResponses.Enqueue(ToolCall(
+            "reoffer-pharmacy",
+            ConciergeToolDefinitions.ProposeRide,
+            new Dictionary<string, object?> { ["dropoff"] = bookedLabel, ["immediate"] = true }));
+        var result = await SubmitAsync(
+            host, handle, stayId, "reoffer-pharmacy", "Book another ride to the same pharmacy.");
+
+        var reoffer = host.ActionTools.Calls.Last(call => call.Name == ConciergeToolDefinitions.ProposeRide);
+        Assert.Equal(bookedLabel, reoffer.Arguments["dropoff"]);
+        var trusted = JsonSerializer.Deserialize<ConciergeCanonicalPlace>(
+            reoffer.Arguments[ConciergeToolDefinitions.TrustedDestinationKey]!.ToString()!,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+        Assert.Equal(new ConciergeCanonicalPlace(bookedLabel, null, null, 25.7745, -80.1329), trusted);
+        Assert.Contains("No ride has been booked.", result.AssistantMessage, StringComparison.Ordinal);
+        await ReplayAsync(await handle.FetchHistoryAsync());
+    }
+
     [Fact]
     public async Task RideLookupWithNoNearbyResultsDoesNotRequestAnotherModelRound()
     {
@@ -991,6 +1036,16 @@ public sealed class ConciergeActionToolWorkflowTests(PostgreSqlFixture postgreSq
             host.ActionTools.Calls.Select(call => call.Name));
         Assert.Equal(ConciergeToolDefinitions.ConfirmRide, host.ActionTools.Calls[1].Name);
         Assert.Contains("South Beach, Miami Beach", confirmed.AssistantMessage, StringComparison.Ordinal);
+        // ADR 0015: the confirmed ride, from the ride service's result, rides with the answer and its
+        // transcript turn; a proposal is not a booking and carries none.
+        Assert.Null(proposalTurn.RideCard);
+        var bookedCard = Assert.IsType<ConciergeRideCard>(confirmed.RideCard);
+        Assert.Equal(ConciergeRideCard.Booked, bookedCard.Kind);
+        var bookedRide = Assert.Single(bookedCard.Rides);
+        Assert.NotEqual(Guid.Empty, bookedRide.RideId);
+        Assert.Contains("South Beach", bookedRide.Dropoff, StringComparison.Ordinal);
+        var bookedHistory = await handle.ExecuteUpdateAsync(workflow => workflow.GetHistoryAsync());
+        Assert.Equal(bookedCard.Rides, bookedHistory.Turns[^1].RideCard?.Rides);
         Assert.DoesNotContain("2217 NW Miami Court", confirmed.AssistantMessage, StringComparison.Ordinal);
         Assert.DoesNotContain("United States of America", confirmed.AssistantMessage, StringComparison.Ordinal);
         Assert.DoesNotContain("simulat", confirmed.AssistantMessage, StringComparison.OrdinalIgnoreCase);
@@ -1365,7 +1420,9 @@ public sealed class ConciergeActionToolWorkflowTests(PostgreSqlFixture postgreSq
                 new JsonSerializerOptions(JsonSerializerDefaults.Web)));
         host.ChatClient.ScriptedResponses.Enqueue(ToolCall(
             "uncertain-confirm", ConciergeToolDefinitions.ConfirmRide, new Dictionary<string, object?>()));
-        await SubmitAsync(host, handle, stayId, confirmationId, "Okay, book it.", "voice");
+        var uncertain = await SubmitAsync(host, handle, stayId, confirmationId, "Okay, book it.", "voice");
+        // ADR 0015: no confirmed ride, no card; the uncertainty is the answer.
+        Assert.Null(uncertain.RideCard);
 
         host.ChatClient.ScriptedResponses.Enqueue(ToolCall(
             "uncertain-revised-confirm",
@@ -1434,6 +1491,17 @@ public sealed class ConciergeActionToolWorkflowTests(PostgreSqlFixture postgreSq
         Assert.True(continued.ConsumedRideConfirmationOutcome?.Confirmed);
         Assert.Equal(ride.Id, continued.ConsumedRideConfirmationOutcome?.RideId);
         Assert.Equal(ride.PickupAt, continued.ConsumedRideConfirmationOutcome?.PickupAt);
+        // ADR 0015: the card is not carried in Continue-As-New input; the new run reads it back
+        // from the persisted transcript row (its runTurns start empty).
+        Assert.All(continued.RecentTurns ?? [], turn => Assert.Null(turn.RideCard));
+        var persistedBooking = Assert.Single(
+            (await handle.ExecuteUpdateAsync(workflow => workflow.GetHistoryAsync())).Turns,
+            turn => turn.TurnId == confirmationId);
+        var persistedRide = Assert.Single(Assert.IsType<ConciergeRideCard>(persistedBooking.RideCard).Rides);
+        Assert.Equal(ConciergeRideCard.Booked, persistedBooking.RideCard!.Kind);
+        Assert.Equal(ride.Id, persistedRide.RideId);
+        Assert.Equal(ride.PickupAt, persistedRide.PickupAtUtc);
+        Assert.Equal("South Beach, Miami Beach, Florida", persistedRide.Dropoff);
 
         host.ChatClient.ScriptedResponses.Enqueue(ToolCall(
             "continue-revised-confirm",
@@ -2041,6 +2109,13 @@ public sealed class ConciergeActionToolWorkflowTests(PostgreSqlFixture postgreSq
         Assert.DoesNotMatch(GuidPattern, status.AssistantMessage);
         Assert.Contains("South Beach, Miami Beach", history.AssistantMessage, StringComparison.Ordinal);
         Assert.Contains("10:00 AM", history.AssistantMessage, StringComparison.Ordinal);
+        // ADR 0015: an upcoming-rides read carries a scheduled card; status and cancellation do not.
+        Assert.Null(status.RideCard);
+        var scheduledCard = Assert.IsType<ConciergeRideCard>(history.RideCard);
+        Assert.Equal(ConciergeRideCard.Scheduled, scheduledCard.Kind);
+        Assert.Equal(rideId, Assert.Single(scheduledCard.Rides).RideId);
+        Assert.Null(cancellationOffer.RideCard);
+        Assert.Null(cancellation.RideCard);
         Assert.DoesNotContain("2217 NW Miami Court", history.AssistantMessage, StringComparison.Ordinal);
         Assert.DoesNotContain("United States of America", history.AssistantMessage, StringComparison.Ordinal);
         Assert.DoesNotMatch(GuidPattern, history.AssistantMessage);
@@ -2097,6 +2172,8 @@ public sealed class ConciergeActionToolWorkflowTests(PostgreSqlFixture postgreSq
             [ConciergeToolDefinitions.GetRideHistory, ConciergeToolDefinitions.GetRideStatus],
             host.ActionTools.Calls.Select(call => call.Name));
         Assert.Contains("Would you like me to cancel it?", offer.AssistantMessage, StringComparison.Ordinal);
+        // A history read made to pick a ride is a step toward cancelling, not a list for the guest.
+        Assert.Null(offer.RideCard);
         var modelAfterHistory = host.ChatClient.Requests[1];
         var historyResult = Assert.Single(modelAfterHistory.Messages.SelectMany(message => message.Contents)
             .OfType<FunctionResultContent>());
