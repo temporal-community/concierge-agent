@@ -202,7 +202,7 @@ options.
 | --- | --- | --- | --- |
 | `Deepgram:ApiKey` | Empty | n/a | Required for browser voice; supplied through AppHost `Parameters:deepgram-api-key`. The key must be valid at Deepgram; Web does not validate it at startup. |
 | `Deepgram:ListenModel` | `flux-general-en` | n/a | Deepgram speech-to-text model; Flux uses provider version `v2`, Nova uses `v1`; configure on Web, not forwarded by AppHost. |
-| `Deepgram:SpeakModel` | `aura-2-thalia-en` | n/a | Deepgram text-to-speech model; Aura uses provider version `v1`, Flux uses `v2`; configure on Web, not forwarded by AppHost. |
+| `Deepgram:SpeakModel` | `flux-hannah-en` | n/a | Deepgram text-to-speech model; Flux (default) uses provider version `v2`, Aura (still configurable) uses `v1`; configure on Web, not forwarded by AppHost. |
 | `Deepgram:Speed` | `1.0` | Number | TTS speed; Flux accepts `0.5–1.5` in `0.05` steps, Aura accepts `0.7–1.5`; configure on Web, not forwarded by AppHost. |
 | `Deepgram:IdleTimeoutMinutes` | `2` | Minutes | Integer `1–60`; ends an idle voice chat; configure on Web, not forwarded by AppHost. |
 
