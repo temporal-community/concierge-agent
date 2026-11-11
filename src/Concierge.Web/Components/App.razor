@@ -6,6 +6,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <base href="/" />
     <ImportMap />
+    @* Blocking on purpose: sets data-brand/data-theme before the first paint. *@
+    <script src="@Assets["js/theme.js"]"></script>
+    @* Deepgram theme fonts. Browsers only fetch the font files when a Deepgram face is in use. *@
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Azeret+Mono:wght@400..700&family=Work+Sans:wght@400..700&display=swap" />
     <link rel="stylesheet" href="@Assets["css/app.css"]" />
     <link rel="stylesheet" href="@Assets["Concierge.Web.styles.css"]" />
     <HeadOutlet />
@@ -15,6 +21,7 @@
     <Routes />
     <script src="@Assets["js/concierge.js"]"></script>
     <script src="@Assets["js/voice.js"]"></script>
+    <script src="@Assets["js/agentic.js"]"></script>
     <script src="@Assets["_framework/blazor.web.js"]"></script>
 </body>
 

@@ -1,0 +1,43 @@
+@using Microsoft.AspNetCore.Components.AI
+@implements IDisposable
+
+@* Place inside the AgentBoundary as a sibling BEFORE MessageList: restores the stay's history into the
+   cascaded AgentContext once, hands that context to the page (for later re-restores), and reports whether
+   the page's own run is in flight so a live update can wait for it. ChatPage cannot host it: its
+   MessageListContent renders after the list has drawn, and its Header renders outside the boundary (no
+   AgentContext). Both observed in AgenticPageRenderTests. *@
+
+@code {
+    [CascadingParameter]
+    public AgentContext? Context { get; set; }
+
+    /// <summary>Raised with true while a run streams or awaits input, false when it settles.</summary>
+    [Parameter]
+    public EventCallback<bool> BusyChanged { get; set; }
+
+    /// <summary>Raised once the history is restored, with the context the page re-restores later.</summary>
+    [Parameter]
+    public EventCallback<AgentContext> Restored { get; set; }
+
+    private IDisposable? statusRegistration;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (Context is null)
+        {
+            return;
+        }
+
+        // MUST RUN BEFORE MessageList RENDERS: restoring raises no turn or status notification
+        // (0.1.0-preview.1.26466.103), so a list that has already drawn never shows restored turns. As an
+        // earlier sibling, this initializes first; over the in-memory stay thread the restore completes
+        // synchronously, so the turns are there when the list first draws.
+        await Context.RestoreAsync(CancellationToken.None);
+        statusRegistration = Context.RegisterOnStatusChanged(status =>
+            _ = InvokeAsync(() => BusyChanged.InvokeAsync(
+                status is ConversationStatus.Streaming or ConversationStatus.AwaitingInput)));
+        await Restored.InvokeAsync(Context);
+    }
+
+    public void Dispose() => statusRegistration?.Dispose();
+}

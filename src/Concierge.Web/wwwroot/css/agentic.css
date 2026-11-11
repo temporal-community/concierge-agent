@@ -1,0 +1,459 @@
+/*
+ * The guest chat page (Agentic.razor, ADR 0015): the Components.AI kit in the app's look.
+ *
+ * The kit declares its theme on .sc-ai-root with no dark mode of its own. These rules map its variables
+ * onto app.css tokens, which already follow data-brand, data-theme and the OS scheme, so the kit follows
+ * the theme picker. ai-chat.css loads after app.css, hence the .page-shell prefix.
+ */
+.page-shell .sc-ai-root {
+    --sc-ai-font-family: inherit;
+    --sc-ai-color-bg: var(--transcript-background);
+    --sc-ai-color-surface: var(--composer-background);
+    --sc-ai-color-surface-hover: var(--panel-background);
+    --sc-ai-color-text: var(--text-primary);
+    --sc-ai-color-text-secondary: var(--text-secondary);
+    --sc-ai-color-text-on-accent: var(--primary-action-text);
+    --sc-ai-color-accent: var(--primary-action-background);
+    --sc-ai-color-accent-hover: var(--primary-action-hover);
+    --sc-ai-color-border: var(--border-color);
+    --sc-ai-color-error: var(--error-text);
+    --sc-ai-color-error-bg: var(--error-background);
+    --sc-ai-color-bubble-user: var(--guest-message-background);
+    --sc-ai-color-bubble-user-text: var(--guest-message-text);
+    --sc-ai-color-bubble-assistant: var(--concierge-message-background);
+    --sc-ai-color-bubble-assistant-text: var(--text-primary);
+    --sc-ai-focus-ring: 0 0 0 2px var(--focus-ring);
+    --sc-ai-border-radius-lg: 16px;
+    --sc-ai-max-width: 100%;
+}
+
+/* Inside the chat panel instead of a full-viewport page. */
+.page-shell .sc-ai-chat-page {
+    flex: 1 1 auto;
+    height: auto;
+    min-height: 0;
+}
+
+/* The scroll area; the kit's list only stacks the rows (StayMessage markup). */
+.page-shell .agentic-transcript {
+    position: relative;
+    flex: 1 1 auto;
+    min-height: 90px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 20px 22px 24px;
+    background: var(--transcript-background);
+    scrollbar-color: var(--border-color) transparent;
+    scrollbar-width: thin;
+}
+
+.page-shell .agentic-transcript .sc-ai-message-list {
+    gap: 0;
+    margin: 0;
+    padding: 0;
+}
+
+.page-shell .agentic-transcript .sc-ai-message-list__footer {
+    padding: 0;
+}
+
+/* The input row, in the composer band at the foot of the chat panel. */
+.page-shell .sc-ai-chat-page__footer {
+    padding: 13px 18px 16px;
+    background: var(--composer-background);
+    border-top: 1px solid var(--border-color);
+}
+
+.page-shell .agentic-transcript .new-message-button[hidden] {
+    display: none;
+}
+
+/* Starter questions as one-tap chips in the suggestion colours. */
+.agentic-suggestions {
+    display: grid;
+    gap: 12px;
+    justify-items: start;
+    padding: 6px 0 12px;
+}
+
+.agentic-suggestions__title {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 15px;
+    font-weight: 650;
+}
+
+.agentic-suggestions__chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.agentic-suggestion-chip {
+    padding: 8px 14px;
+    color: var(--suggestion-text);
+    background: var(--suggestion-background);
+    border: 1px solid var(--suggestion-border);
+    border-radius: 999px;
+    font: inherit;
+    font-size: 14px;
+    cursor: pointer;
+}
+
+.agentic-suggestion-chip:hover:not(:disabled) {
+    border-color: var(--accent-color);
+}
+
+.agentic-suggestion-chip:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+}
+
+.agentic-suggestion-chip:disabled {
+    cursor: default;
+    opacity: .55;
+}
+
+/* Ride cards (ADR 0015): under the concierge bubble, in the app tokens so every theme follows. */
+.ride-card-row {
+    display: flex;
+    justify-content: flex-start;
+    margin: -6px 0 18px;
+}
+
+.ride-card {
+    width: min(420px, 100%);
+    padding: 14px 16px;
+    color: var(--text-primary);
+    background: var(--surface-background);
+    border: 1px solid var(--border-color);
+    border-left: 3px solid var(--accent-color);
+    border-radius: 14px;
+}
+
+.ride-card__header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 10px;
+}
+
+.ride-card__header h3 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 700;
+}
+
+.ride-card__note {
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.ride-card__rides {
+    display: grid;
+    gap: 10px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.ride-card__ride + .ride-card__ride {
+    padding-top: 10px;
+    border-top: 1px solid var(--border-color);
+}
+
+.ride-card__ride-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.ride-card__dropoff {
+    overflow-wrap: anywhere;
+}
+
+.ride-card__status {
+    flex: none;
+    padding: 2px 8px;
+    color: var(--suggestion-text);
+    background: var(--suggestion-background);
+    border: 1px solid var(--suggestion-border);
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.ride-card__time {
+    display: block;
+    margin-top: 2px;
+    color: var(--text-secondary);
+    font-size: 14px;
+}
+
+.ride-card__detail {
+    margin: 4px 0 0;
+    color: var(--text-secondary);
+    font-size: 13px;
+    overflow-wrap: anywhere;
+}
+
+/* ---------- Voice in the message input (after the AgenticUI sample's VoiceControls) ---------- */
+/* Rendered as LeadingActions (TrailingActions would replace Send) and shown between the text and Send. */
+.sc-ai-input > .voice-input {
+    order: 1;
+}
+
+.sc-ai-input > .sc-ai-input__send {
+    order: 2;
+}
+
+.voice-input {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: .35rem;
+    flex-shrink: 0;
+    /* The kit bottom-aligns the input row (Send included); match it so the buttons stay level. */
+    align-self: flex-end;
+}
+
+.voice-input__button {
+    width: 2.25rem;
+    height: 2.25rem;
+    padding: 0;
+    border: 1px solid var(--border-color);
+    border-radius: 50%;
+    background: var(--surface-background);
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.voice-input__button:hover:not(:disabled) {
+    background: var(--panel-background);
+    color: var(--text-primary);
+}
+
+.voice-input__button:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+}
+
+.voice-input__button:disabled {
+    opacity: .5;
+    cursor: default;
+}
+
+.voice-input__button svg {
+    width: 1.15rem;
+    height: 1.15rem;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.voice-input__button--muted {
+    opacity: .7;
+    /* A theme can mark a muted speaker with its own border (Deepgram: Bakelite). */
+    border-color: var(--voice-muted-border, var(--border-color));
+}
+
+/* The idle mic. A theme can set --voice-idle-* (Deepgram: Glass); else the neutral button above. */
+.voice-input__mic {
+    background: var(--voice-idle-background, var(--surface-background));
+    border-color: var(--voice-idle-border, var(--border-color));
+    color: var(--voice-idle-text, var(--text-secondary));
+}
+
+.voice-input__mic:hover:not(:disabled) {
+    background: var(--voice-idle-hover, var(--panel-background));
+    color: var(--voice-idle-hover-text, var(--text-primary));
+}
+
+/* A live session's mic. A theme can set --voice-active-* (Deepgram: plain surface); else the primary action. */
+.voice-input:is([data-state="listening"], [data-state="thinking"], [data-state="speaking"]) .voice-input__mic,
+.voice-input:is([data-state="listening"], [data-state="thinking"], [data-state="speaking"]) .voice-input__mic:hover:not(:disabled) {
+    background: var(--voice-active-background, var(--primary-action-background));
+    border-color: var(--voice-active-border, var(--voice-active-background, var(--primary-action-background)));
+    color: var(--voice-active-text, var(--primary-action-text));
+}
+
+/* While voice is live, hovering or focusing the mic shows the slashed mic: pressing it turns voice off. */
+.voice-input__icon--off {
+    display: none;
+}
+
+/* The speaker the same way while it's on; a muted speaker always shows the slash. */
+.voice-input:is([data-state="listening"], [data-state="thinking"], [data-state="speaking"]) .voice-input__mic:is(:hover, :focus-visible) .voice-input__icon,
+.voice-input__speaker:not(.voice-input__button--muted):is(:hover, :focus-visible) .voice-input__icon {
+    display: none;
+}
+
+.voice-input:is([data-state="listening"], [data-state="thinking"], [data-state="speaking"]) .voice-input__mic:is(:hover, :focus-visible) .voice-input__icon--off,
+.voice-input__speaker:not(.voice-input__button--muted):is(:hover, :focus-visible) .voice-input__icon--off {
+    display: block;
+}
+
+/* Level rings: --level (0..1) comes from voice.js on every animation frame. The mic ring follows the
+   guest's voice and the speaker ring the concierge's. */
+.voice-input__meter {
+    --level: 0;
+    display: flex;
+    border-radius: 50%;
+    box-shadow: 0 0 0 calc(var(--level) * .55rem) color-mix(in srgb, var(--accent-color) 30%, transparent);
+    transition: box-shadow 60ms linear;
+}
+
+.voice-input__meter--speaker {
+    box-shadow: 0 0 0 calc(var(--level) * .55rem) color-mix(in srgb, var(--accent-color) 22%, transparent),
+        0 0 0 calc(var(--level) * .9rem) color-mix(in srgb, var(--accent-color) 10%, transparent);
+}
+
+/* Above the input's top-right corner: the voice state, and to its left what the guest just said. It
+   floats over the footer's top edge, so starting voice doesn't move the input. */
+.page-shell .sc-ai-chat-page__input-container {
+    position: relative;
+}
+
+.voice-status-row {
+    position: absolute;
+    right: 0;
+    bottom: calc(100% + 6px);
+    left: 0;
+    display: flex;
+    align-items: flex-end;
+    justify-content: flex-end;
+    gap: .5rem;
+    pointer-events: none;
+    z-index: 1;
+}
+
+.voice-input__status {
+    display: inline-flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: .35rem;
+    padding: .15rem .6rem;
+    border: 1px solid var(--border-color);
+    border-radius: 999px;
+    background: var(--surface-background);
+    color: var(--text-secondary);
+    font-size: .8125rem;
+    white-space: nowrap;
+}
+
+.voice-input__dot {
+    width: .5rem;
+    height: .5rem;
+    border-radius: 50%;
+    background: var(--text-muted);
+}
+
+.voice-status-row:is([data-state="connecting"], [data-state="listening"], [data-state="thinking"]) .voice-input__dot {
+    background: var(--accent-color);
+    animation: voice-input-pulse 1.6s ease-out infinite;
+}
+
+.voice-status-row[data-state="thinking"] .voice-input__dot {
+    animation-duration: .8s;
+}
+
+.voice-status-row[data-state="speaking"] .voice-input__dot {
+    background: var(--accent-color);
+}
+
+.voice-status-row[data-state="disconnected"] .voice-input__dot {
+    background: var(--error-text);
+}
+
+/* What the guest just said, or a failure: left of the status, in the same row above the input. */
+.voice-input__bubble {
+    min-width: 0;
+    max-width: min(36rem, 100%);
+    padding: .3rem .7rem;
+    border-radius: 8px;
+    background: var(--surface-background);
+    border: 1px solid var(--border-color);
+    box-shadow: 0 2px 8px rgb(0 0 0 / .08);
+    color: var(--text-secondary);
+    font-size: .8125rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.voice-input__bubble--error {
+    color: var(--error-text);
+    background: var(--error-background);
+    border-color: var(--error-border);
+    white-space: normal;
+}
+
+@keyframes voice-input-pulse {
+    0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent-color) 50%, transparent); }
+    100% { box-shadow: 0 0 0 .35rem color-mix(in srgb, var(--accent-color) 0%, transparent); }
+}
+
+/* Reduced motion: no pulse, and the rings show activity by colour, not by growing. */
+@media (prefers-reduced-motion: reduce) {
+    .voice-input__dot { animation: none !important; }
+    .voice-input__meter,
+    .voice-input__meter--speaker {
+        transition: none;
+        box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-color) calc(var(--level) * 60%), transparent);
+    }
+}
+
+/* Development only: the exception behind a failed run, under the send-error card's text. */
+.turn-error__body {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.turn-error__details {
+    margin-top: 8px;
+}
+
+.turn-error__details summary {
+    cursor: pointer;
+    font-weight: 600;
+}
+
+.turn-error__details pre {
+    max-height: 16rem;
+    margin: 6px 0 0;
+    padding: 8px 10px;
+    overflow: auto;
+    color: var(--text-primary);
+    background: var(--surface-background);
+    border: 1px solid var(--error-border);
+    border-radius: 8px;
+    font-size: 12px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+/* Development only: the same expander under a concierge reply that reports a failure. */
+.agentic-error-details-row {
+    display: flex;
+    justify-content: flex-start;
+    margin: -6px 0 18px;
+}
+
+.agentic-error-details {
+    width: min(560px, 100%);
+    margin-top: 0;
+    padding: 8px 12px;
+    color: var(--error-text);
+    background: var(--error-background);
+    border: 1px solid var(--error-border);
+    border-radius: 12px;
+    font-size: 13px;
+}

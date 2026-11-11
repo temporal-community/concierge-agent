@@ -1,0 +1,64 @@
+@using System.Globalization
+@using Concierge.Contracts
+@using Concierge.Web.Agentic
+@using Concierge.Web.Components.Shared
+@using Concierge.Web.Services
+@using Microsoft.AspNetCore.Components.AI
+
+@* A turn's ride card (ADR 0015): the ride service's result, carried as a show_ride_card call and result
+   and drawn by a BlockRenderer<FunctionInvocationContentBlock>. A snapshot as of the turn; the Activity
+   panel has live status. Unreadable data draws nothing, and the answer text above still stands. *@
+
+@if (card is not null)
+{
+    <section class="ride-card-row" aria-label="@Title">
+        <div class="ride-card">
+            <header class="ride-card__header">
+                <h3>@Title</h3>
+                <span class="ride-card__note">Hotel time (ET)</span>
+            </header>
+            <ul class="ride-card__rides">
+                @foreach (var ride in card.Rides)
+                {
+                    var pickupAt = TimeZoneInfo.ConvertTime(ride.PickupAtUtc, ConciergeGuestUi.HotelTimeZone);
+                    <li class="ride-card__ride">
+                        <div class="ride-card__ride-heading">
+                            <strong class="ride-card__dropoff">@ride.Dropoff</strong>
+                            <span class="ride-card__status">@RideActivityPanel.StatusLabel(ride.Status)</span>
+                        </div>
+                        <time class="ride-card__time" datetime="@ride.PickupAtUtc.ToString("O", CultureInfo.InvariantCulture)">
+                            @pickupAt.ToString("ddd MMM d · h:mm tt", CultureInfo.InvariantCulture)
+                        </time>
+                        @if (!string.IsNullOrWhiteSpace(ride.Pickup))
+                        {
+                            <p class="ride-card__detail">Pickup: @ride.Pickup</p>
+                        }
+                        @if (DriverLine(ride) is { } driver)
+                        {
+                            <p class="ride-card__detail">@driver</p>
+                        }
+                    </li>
+                }
+            </ul>
+        </div>
+    </section>
+}
+
+@code {
+    [Parameter, EditorRequired]
+    public FunctionInvocationContentBlock Block { get; set; } = default!;
+
+    private ConciergeRideCard? card;
+
+    private string Title => card?.Kind == ConciergeRideCard.Booked
+        ? "Ride booked"
+        : card?.Rides.Count == 1 ? "Your scheduled ride" : "Your scheduled rides";
+
+    protected override void OnParametersSet() => card = AgenticConcierge.ReadRideCard(Block.Result);
+
+    private static string? DriverLine(ConciergeRideCardRide ride)
+    {
+        var parts = new[] { ride.DriverName, ride.Car, ride.Plate }.Where(part => !string.IsNullOrWhiteSpace(part)).ToArray();
+        return parts.Length == 0 ? null : string.Join(" · ", parts);
+    }
+}

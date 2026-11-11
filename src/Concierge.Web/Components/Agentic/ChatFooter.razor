@@ -1,0 +1,63 @@
+@using Microsoft.AspNetCore.Components.AI
+
+@* MessageList.Footer: the room device's question while the desk works on it, "Preparing a reply…"
+   while this page's own run streams, and the send-error card with Retry. In Development the card also
+   expands to the exception behind the failure. *@
+
+@if (!string.IsNullOrWhiteSpace(DeviceQuestion))
+{
+    <div class="reply-pending agentic-device-question" role="status" aria-live="polite">
+        <span class="pending-dot" aria-hidden="true"></span>
+        The room device is asking: “@DeviceQuestion”
+    </div>
+}
+@if (Context.Status == ConversationStatus.Streaming)
+{
+    <div class="reply-pending" role="status" aria-live="polite">
+        <span class="pending-dot" aria-hidden="true"></span>
+        Preparing a reply…
+    </div>
+}
+else if (Context.Status == ConversationStatus.Error)
+{
+    <div class="turn-error" role="alert">
+        <div class="turn-error__body">
+            <strong>We couldn’t send that message.</strong>
+            <p>Check your connection, then try again.</p>
+            @if (FailureDetails is not null && Details() is { Length: > 0 } details)
+            {
+                <details class="turn-error__details">
+                    <summary>Error details (development)</summary>
+                    <pre>@details</pre>
+                </details>
+            }
+        </div>
+        <button type="button" class="secondary-button" @onclick="RetryAsync">Try again</button>
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired]
+    public AgentContext Context { get; set; } = default!;
+
+    /// <summary>Another client's question that has no answer yet, or null.</summary>
+    [Parameter]
+    public string? DeviceQuestion { get; set; }
+
+    /// <summary>
+    /// Development only: the server's recorded exception for the failed run, or null. When set, the
+    /// error card shows it with the page's own exception in an expander.
+    /// </summary>
+    [Parameter]
+    public Func<string?>? FailureDetails { get; set; }
+
+    // The server's exception explains a run the AG-UI host reported generically; the page's own one
+    // covers failures that never reached the server (the loopback call, the stream breaking).
+    private string Details() => string.Join("\n\n", new[]
+    {
+        FailureDetails?.Invoke() is { Length: > 0 } server ? $"Server:\n{server}" : null,
+        Context.Error is { } error ? $"Page:\n{error}" : null,
+    }.Where(part => part is not null));
+
+    private Task RetryAsync() => Context.RetryAsync(CancellationToken.None);
+}

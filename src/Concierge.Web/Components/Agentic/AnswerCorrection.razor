@@ -1,0 +1,27 @@
+@using Microsoft.AspNetCore.Components.AI
+
+@* Drawn by a BlockRenderer for the concierge_answer call (ADR 0015): the streamed text was provisional
+   and the committed answer differs. It draws nothing; the page reloads the conversation from history,
+   which replaces the streamed bubble with the committed answer. *@
+
+@code {
+    private string? reported;
+
+    [Parameter, EditorRequired]
+    public FunctionInvocationContentBlock Block { get; set; } = default!;
+
+    /// <summary>Raised once per call ID, when its result has arrived.</summary>
+    [Parameter]
+    public EventCallback<string> Corrected { get; set; }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        // Once only: the callback re-renders its receiver, which sets these parameters again.
+        if (Block.HasResult && Block.Call?.CallId is { Length: > 0 } callId
+            && !StringComparer.Ordinal.Equals(reported, callId))
+        {
+            reported = callId;
+            await Corrected.InvokeAsync(callId);
+        }
+    }
+}

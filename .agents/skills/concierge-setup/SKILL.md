@@ -47,10 +47,11 @@ Read these as needed instead of assuming:
 
 ### 1. Check current state
 
-The checker is a .NET file-based app, so it needs the .NET SDK first. Run
-`dotnet --list-sdks`. If the major version in the AppHost csproj's
-`<TargetFramework>` isn't listed, install that SDK from the README prerequisites
-link before going on. Then run, from the repo root:
+The checker is a .NET file-based app, so it needs the .NET SDK first. The repo
+root's `global.json` pins the SDK version (later 11.0.1xx feature bands also
+satisfy it). Run `dotnet --version` from the repo root. If it fails with "A
+compatible .NET SDK was not found", install the SDK named in `global.json` from
+the README prerequisites link before going on. Then run, from the repo root:
 
 ```bash
 dotnet run --file .agents/skills/concierge-setup/scripts/check-setup.cs

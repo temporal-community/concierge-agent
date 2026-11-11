@@ -60,6 +60,19 @@ public static class RideEndpoints
                 "cancel",
                 logger));
 
+        endpoints.MapPost("/stays/{stayId:guid}/rides/purge", async (
+            Guid stayId,
+            RideBookingService service,
+            HttpContext context,
+            ILogger<RideBookingService> logger) =>
+            await ExecuteNoContentAsync(
+                () => service.PurgeStayAsync(
+                    stayId,
+                    GetScope(context),
+                    context.RequestAborted),
+                "purge",
+                logger));
+
         return endpoints;
     }
 

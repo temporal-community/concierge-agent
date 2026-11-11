@@ -1,86 +1,104 @@
+/*
+ * Themes are a brand (data-brand on <html>) times a mode (data-theme). js/theme.js sets both before the
+ * first paint. Each token is light-dark(light, dark): an explicit data-theme pins color-scheme, and with
+ * no data-theme ("System") color-scheme follows the OS, so system mode needs no duplicated dark block.
+ * Every brand block must define every token; the contrast test in concierge-browser.test.cjs reads them.
+ */
 :root {
-    color-scheme: light;
-    --page-background: #eceef2;
-    --panel-background: #e0ddea;
-    --surface-background: #ffffff;
-    --transcript-background: #f5f5fd;
-    --composer-background: #ffffff;
-    --input-background: #ffffff;
-    --text-primary: #141414;
-    --text-secondary: #596174;
-    --text-muted: #656d7e;
-    --border-color: #e1e1ed;
-    --accent-color: #6d3fc0;
-    --primary-action-background: #6d3fc0;
-    --primary-action-hover: #5b319f;
-    --primary-action-text: #ffffff;
-    --suggestion-background: #f0e0ff;
-    --suggestion-border: #e5c9ff;
-    --suggestion-text: #542e91;
-    --guest-message-background: #f0e0ff;
-    --guest-message-border: #e5c9ff;
-    --guest-message-text: #141414;
-    --concierge-message-background: #ffffff;
-    --error-background: #fef2f2;
-    --error-border: #fecaca;
-    --error-text: #991b1b;
-    --focus-ring: #6d3fc0;
-    font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    color-scheme: light dark;
+    font-family: var(--font-body);
     font-synthesis: none;
+}
+
+:root[data-theme="light"] {
+    color-scheme: light;
 }
 
 :root[data-theme="dark"] {
     color-scheme: dark;
-    --page-background: #171520;
-    --panel-background: #262331;
-    --surface-background: #211e2b;
-    --transcript-background: #211e2b;
-    --composer-background: #262331;
-    --input-background: #211e2b;
-    --text-primary: #f5f2fa;
-    --text-secondary: #c6c0d1;
-    --text-muted: #aba4b8;
-    --border-color: #40394d;
-    --accent-color: #b99af0;
-    --suggestion-background: #382a4c;
-    --suggestion-border: #674d82;
-    --suggestion-text: #f1e8ff;
-    --guest-message-background: #382a4c;
-    --guest-message-border: #674d82;
-    --guest-message-text: #f5f0fc;
-    --concierge-message-background: #292533;
-    --error-background: #44282b;
-    --error-border: #7d4248;
-    --error-text: #ffd9dc;
-    --focus-ring: #c8aafa;
 }
 
-@media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]):not([data-theme="dark"]) {
-        color-scheme: dark;
-        --page-background: #171520;
-        --panel-background: #262331;
-        --surface-background: #211e2b;
-        --transcript-background: #211e2b;
-        --composer-background: #262331;
-        --input-background: #211e2b;
-        --text-primary: #f5f2fa;
-        --text-secondary: #c6c0d1;
-        --text-muted: #aba4b8;
-        --border-color: #40394d;
-        --accent-color: #b99af0;
-        --suggestion-background: #382a4c;
-        --suggestion-border: #674d82;
-        --suggestion-text: #f1e8ff;
-        --guest-message-background: #382a4c;
-        --guest-message-border: #674d82;
-        --guest-message-text: #f5f0fc;
-        --concierge-message-background: #292533;
-        --error-background: #44282b;
-        --error-border: #7d4248;
-        --error-text: #ffd9dc;
-        --focus-ring: #c8aafa;
-    }
+/* Temporal (default): UV #444ce7, Space Black #141414, Off White #f8fafc from temporal.io/brand. */
+:root {
+    --font-body: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --font-action: var(--font-body);
+    --shadow-tint: 20 22 60;
+    --page-background: light-dark(#f1f5f9, #141414);
+    --panel-background: light-dark(#e6e9f2, #222226);
+    --surface-background: light-dark(#ffffff, #1b1b1e);
+    --transcript-background: light-dark(#f8fafc, #1b1b1e);
+    --composer-background: light-dark(#ffffff, #222226);
+    --input-background: light-dark(#ffffff, #1b1b1e);
+    --text-primary: light-dark(#141414, #f8fafc);
+    --text-secondary: light-dark(#475569, #c2c7d0);
+    --text-muted: light-dark(#4e596b, #a1a7b3);
+    --border-color: light-dark(#dde1ea, #33343a);
+    --accent-color: light-dark(#444ce7, #8b90f2);
+    --primary-action-background: light-dark(#444ce7, #444ce7);
+    --primary-action-hover: light-dark(#363dc4, #5a61ec);
+    --primary-action-text: light-dark(#ffffff, #ffffff);
+    --suggestion-background: light-dark(#e8e9fc, #23264d);
+    --suggestion-border: light-dark(#cfd1fa, #3c41a0);
+    --suggestion-text: light-dark(#2f35a8, #e6e7fd);
+    --guest-message-background: light-dark(#e8e9fc, #23264d);
+    --guest-message-border: light-dark(#cfd1fa, #3c41a0);
+    --guest-message-text: light-dark(#141414, #f8fafc);
+    --concierge-message-background: light-dark(#ffffff, #222226);
+    --error-background: light-dark(#fef2f2, #44282b);
+    --error-border: light-dark(#fecaca, #7d4248);
+    --error-text: light-dark(#991b1b, #ffd9dc);
+    --focus-ring: light-dark(#444ce7, #8b90f2);
+}
+
+/*
+ * Deepgram 2026 brand kit: Fuchsia #e042ff, LED #7f39ff, Glass #00b2ff (the kit's primary UI button
+ * color), Off-black #1d1d1d, Off-white #fcfaf8, Light Gray #c4c4c4, Clay #eb2a2e. Work Sans for text,
+ * Azeret Mono for CTAs. Fuchsia is under 4.5:1 on light surfaces, so light mode accents use LED.
+ * Dark mode's primary action is Fuchsia (black text 6.4:1); light mode keeps Glass.
+ */
+:root[data-brand="deepgram"] {
+    --font-body: "Work Sans", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --font-action: "Azeret Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    --shadow-tint: 0 0 0;
+    --page-background: light-dark(#f3f1ee, #000000);
+    --panel-background: light-dark(#e9e6e1, #262626);
+    --surface-background: light-dark(#ffffff, #1d1d1d);
+    --transcript-background: light-dark(#fcfaf8, #1d1d1d);
+    --composer-background: light-dark(#ffffff, #262626);
+    --input-background: light-dark(#ffffff, #1d1d1d);
+    --text-primary: light-dark(#1d1d1d, #fcfaf8);
+    --text-secondary: light-dark(#4a4a4a, #c4c4c4);
+    --text-muted: light-dark(#585858, #a3a3a3);
+    --border-color: light-dark(#e2dfda, #3a3a3a);
+    --accent-color: light-dark(#7f39ff, #e042ff);
+    --primary-action-background: light-dark(#00b2ff, #e042ff);
+    --primary-action-hover: light-dark(#33c1ff, #e66bff);
+    --primary-action-text: light-dark(#000000, #000000);
+    /*
+     * The chat page's mic is Glass while idle, an invitation to talk that reads apart from Fuchsia actions
+     * (black icon 8.8:1), and plain surface with a Glass border during a session, when the level ring
+     * and status pill show the state. A muted speaker gets a Bakelite border.
+     */
+    --voice-idle-background: #00b2ff;
+    --voice-idle-border: #00b2ff;
+    --voice-idle-text: #000000;
+    --voice-idle-hover: #33c1ff;
+    --voice-idle-hover-text: #000000;
+    --voice-active-background: var(--surface-background);
+    --voice-active-border: #00b2ff;
+    --voice-muted-border: #fa8100;
+    --voice-active-text: var(--text-secondary);
+    --suggestion-background: light-dark(#fbe6ff, #3a1442);
+    --suggestion-border: light-dark(#f2c2ff, #6b2a7a);
+    --suggestion-text: light-dark(#5a1f8a, #fcfaf8);
+    --guest-message-background: light-dark(#fbe6ff, #3a1442);
+    --guest-message-border: light-dark(#f2c2ff, #6b2a7a);
+    --guest-message-text: light-dark(#1d1d1d, #fcfaf8);
+    --concierge-message-background: light-dark(#ffffff, #262626);
+    --error-background: light-dark(#fdecec, #3d1415);
+    --error-border: light-dark(#f5b5b6, #7a2a2c);
+    --error-text: light-dark(#a3181b, #ffd6d7);
+    --focus-ring: light-dark(#7f39ff, #e042ff);
 }
 
 * {
@@ -121,11 +139,38 @@ a:focus-visible {
     outline-offset: 2px;
 }
 
+/*
+ * The hotel exterior shows around the chat panel and focus cards. The scrim is the brand's own page
+ * color, so the margins still read as the selected theme; text never sits directly on the photo.
+ * Error and NotFound don't use .page-shell, so their bare text stays on the plain page color.
+ */
 .page-shell {
+    --page-scrim: light-dark(
+        color-mix(in srgb, var(--page-background) 40%, transparent),
+        color-mix(in srgb, var(--page-background) 55%, transparent));
+    /*
+     * Tinted glass for the containers that sit on the photo. Text sits directly on it, so these are
+     * the most transparent values that keep AA against this photo, measured on the rendered page:
+     * light mode is bound by --text-muted over the dark car and trees; dark mode by bright spots
+     * (neon, windows), which the heavy blur spreads out. tests/glass-contrast.test.mjs re-measures
+     * them; a different background photo needs that test to pass again.
+     */
+    --glass-fill: light-dark(
+        color-mix(in srgb, var(--surface-background) 75%, transparent),
+        color-mix(in srgb, var(--surface-background) 60%, transparent));
+    --glass-tint: color-mix(in srgb, var(--accent-color) 6%, transparent);
+    /* Speaker labels sit on the glass; pure accent misses AA there, so blend it toward the text color. */
+    --glass-label: color-mix(in srgb, var(--accent-color) 75%, var(--text-primary));
+    --glass-edge: light-dark(rgb(255 255 255 / 70%), rgb(255 255 255 / 10%));
+    --glass-highlight: light-dark(rgb(255 255 255 / 80%), rgb(255 255 255 / 6%));
+    --glass-blur: blur(60px) saturate(160%);
     display: flex;
     flex-direction: column;
     width: 100%;
     height: 100dvh;
+    background:
+        linear-gradient(var(--page-scrim), var(--page-scrim)),
+        var(--page-background) url("../images/hotel-zgy-pool.jpg") center / cover no-repeat;
 }
 
 .site-header {
@@ -142,26 +187,6 @@ a:focus-visible {
 
 .header-actions.voice-header-actions {
     gap: 12px;
-}
-
-.voice-status {
-    display: inline-flex;
-    flex: 0 0 auto;
-    align-items: center;
-    gap: 8px;
-    color: var(--suggestion-text);
-    padding: 6px 12px;
-    background: var(--suggestion-background);
-    border: 1px solid var(--suggestion-border);
-    border-radius: 999px;
-    font-size: 12px;
-    letter-spacing: .06em;
-    text-transform: uppercase;
-    white-space: nowrap;
-}
-
-.voice-status strong {
-    font-weight: 700;
 }
 
 .voice-header-controls {
@@ -368,8 +393,63 @@ a:focus-visible {
     justify-content: initial;
 }
 
+/* Transparent so the page-shell photo shows around the focus card. */
 .focus-main {
-    background: var(--transcript-background);
+    background: transparent;
+}
+
+/*
+ * Glass containers. Only the outer container blurs; layers inside it go transparent so one
+ * backdrop-filter does the work, while bubbles, inputs, buttons and cards stay solid.
+ * The header and focus cards sit on the photo at every width; the chat panel and drawer only above
+ * 700px (below that the chat is edge to edge on a solid color). Selectors carry .page-shell plus a
+ * parent so they outrank the drawer's scoped CSS, which loads after this file.
+ */
+.page-shell .site-header,
+.page-shell .focus-main .focus-card {
+    background: linear-gradient(var(--glass-tint), var(--glass-tint)), var(--glass-fill);
+    border-color: var(--glass-edge);
+    box-shadow: inset 0 1px 0 var(--glass-highlight), 0 8px 30px rgb(var(--shadow-tint) / 12%);
+    -webkit-backdrop-filter: var(--glass-blur);
+    backdrop-filter: var(--glass-blur);
+}
+
+.page-shell .site-header {
+    box-shadow: inset 0 -1px 0 var(--glass-edge);
+}
+
+@media (min-width: 701px) {
+    .page-shell .activity-layout .chat-panel,
+    .page-shell .activity-layout .ride-activity-drawer {
+        background: linear-gradient(var(--glass-tint), var(--glass-tint)), var(--glass-fill);
+        border-color: var(--glass-edge);
+        box-shadow: inset 0 1px 0 var(--glass-highlight), 0 9px 26px rgb(var(--shadow-tint) / 12%);
+        -webkit-backdrop-filter: var(--glass-blur);
+        backdrop-filter: var(--glass-blur);
+    }
+
+    .page-shell .chat-panel :is(.conversation-heading, .agentic-transcript, .sc-ai-chat-page__footer),
+    .page-shell .ride-activity-drawer .ride-activity-footer {
+        background: transparent;
+    }
+
+    .page-shell .chat-panel .message-meta strong {
+        color: var(--glass-label);
+    }
+
+    /* The Components.AI kit paints .sc-ai-chat-page with this; its input keeps the surface. */
+    .page-shell .chat-panel .sc-ai-root {
+        --sc-ai-color-bg: transparent;
+    }
+}
+
+/* Users who ask for less transparency get the solid surfaces back. */
+@media (prefers-reduced-transparency: reduce) {
+    .page-shell {
+        --glass-fill: var(--surface-background);
+        --glass-tint: transparent;
+        --glass-blur: none;
+    }
 }
 
 .chat-panel {
@@ -383,7 +463,7 @@ a:focus-visible {
     background: var(--panel-background);
     border: 1px solid var(--border-color);
     border-radius: 22px;
-    box-shadow: 0 9px 26px rgb(46 37 67 / 9%);
+    box-shadow: 0 9px 26px rgb(var(--shadow-tint) / 9%);
 }
 
 .activity-layout {
@@ -412,134 +492,12 @@ a:focus-visible {
     margin: 28px 24px 34px;
 }
 
-.questions-heading {
-    display: flex;
-    flex: 0 0 auto;
-    align-items: center;
-    gap: 16px;
-    min-height: 64px;
-    padding: 0 28px;
-    color: var(--text-primary);
-    text-align: left;
-    background: var(--surface-background);
-    border: 0;
-    border-bottom: 1px solid var(--border-color);
-    font-size: 21px;
-    font-weight: 620;
-    letter-spacing: -.035em;
-}
-
-.questions-heading > span:nth-child(2) {
-    flex: 1 1 auto;
-}
-
-.wave-icon {
-    display: inline-grid;
-    flex: 0 0 auto;
-    place-items: center;
-    color: var(--accent-color);
-}
-
-.wave-icon svg {
-    display: block;
-    width: 32px;
-    height: 24px;
-    fill: none;
-    stroke: currentColor;
-    stroke-linecap: round;
-    stroke-linejoin: round;
-    stroke-width: 2.5;
-}
-
-.questions-wave-icon {
-    width: 26px;
-    height: 32px;
-}
-
-.questions-wave-icon svg {
-    width: 25px;
-}
-
-.accordion-chevron {
-    width: 23px;
-    height: 23px;
-    flex: 0 0 auto;
-    fill: none;
-    stroke: var(--text-secondary);
-    stroke-linecap: round;
-    stroke-linejoin: round;
-    stroke-width: 2;
-    transition: transform 140ms ease;
-}
-
-.accordion-chevron.is-expanded {
-    transform: rotate(180deg);
-}
-
-.suggestions {
-    display: grid;
-    flex: 0 0 auto;
-    gap: 8px;
-    padding: 17px 28px 18px;
-    background: var(--surface-background);
-    border-bottom: 1px solid var(--border-color);
-}
-
-.suggestions[hidden] {
-    display: none;
-}
-
-.suggestions label,
 .verification-form label {
     color: var(--text-primary);
     font-size: 14px;
     font-weight: 600;
 }
 
-.suggestions select {
-    width: 100%;
-    min-height: 46px;
-    padding: 0 14px;
-    color: var(--text-primary);
-    background: var(--input-background);
-    border: 1px solid var(--border-color);
-    border-radius: 10px;
-    font-size: 14px;
-}
-
-.suggestions select:invalid {
-    color: var(--text-muted);
-}
-
-.suggestion-footer {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-}
-
-.suggestion-footer p {
-    margin: 0;
-    color: var(--text-secondary);
-    font-size: 12px;
-}
-
-.suggestion-send {
-    min-height: 40px;
-    padding: 0 17px;
-    color: var(--suggestion-text);
-    background: var(--suggestion-background);
-    border: 1px solid var(--suggestion-border);
-    border-radius: 10px;
-    font-size: 13px;
-    font-weight: 620;
-}
-
-.suggestion-send:hover:not(:disabled) {
-    filter: brightness(.97);
-}
-
-.suggestion-send:disabled,
 .primary-button:disabled,
 .secondary-button:disabled,
 .voice-control-button:disabled,
@@ -561,26 +519,6 @@ a:focus-visible {
     font-size: 14px;
     font-weight: 650;
     letter-spacing: .055em;
-}
-
-.transcript-wrap {
-    position: relative;
-    display: flex;
-    flex: 1 1 auto;
-    min-height: 90px;
-    overflow: hidden;
-    background: var(--transcript-background);
-}
-
-.transcript {
-    flex: 1 1 auto;
-    min-height: 0;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    padding: 20px 22px 24px;
-    scroll-behavior: smooth;
-    scrollbar-color: var(--border-color) transparent;
-    scrollbar-width: thin;
 }
 
 .date-separator {
@@ -799,7 +737,7 @@ a:focus-visible {
     background: var(--primary-action-background);
     border: 0;
     border-radius: 999px;
-    box-shadow: 0 3px 12px rgb(43 22 65 / 20%);
+    box-shadow: 0 3px 12px rgb(var(--shadow-tint) / 20%);
     font-size: 12px;
     font-weight: 650;
 }
@@ -831,22 +769,6 @@ a:focus-visible {
 
 .turn-error p {
     margin: 3px 0 0;
-}
-
-.retry-button {
-    min-height: 38px;
-    flex: 0 0 auto;
-    padding: 0 15px;
-    color: var(--error-text);
-    background: var(--surface-background);
-    border: 1px solid var(--error-border);
-    border-radius: 9px;
-    font-size: 13px;
-    font-weight: 620;
-}
-
-.retry-button:hover {
-    filter: brightness(.97);
 }
 
 .session-expired {
@@ -888,95 +810,6 @@ a:focus-visible {
     font-size: 12px;
 }
 
-.sign-in-again-button {
-    min-height: 42px;
-    flex: 0 0 auto;
-    padding: 0 17px;
-    color: var(--primary-action-text);
-    background: var(--primary-action-background);
-    border: 0;
-    border-radius: 10px;
-    font-size: 13px;
-    font-weight: 600;
-}
-
-.sign-in-again-button span {
-    padding-left: 7px;
-}
-
-.composer {
-    display: flex;
-    flex: 0 0 auto;
-    flex-direction: column;
-    gap: 9px;
-    padding: 13px 18px 16px;
-    background: var(--composer-background);
-    border-top: 1px solid var(--border-color);
-}
-
-.message-label {
-    color: var(--text-secondary);
-    font-size: 12px;
-    font-weight: 650;
-    letter-spacing: .05em;
-}
-
-.compose-box {
-    display: flex;
-    min-height: 126px;
-    flex-direction: column;
-    justify-content: space-between;
-    padding: 11px 12px 10px 14px;
-    background: var(--input-background);
-    border: 1px solid var(--border-color);
-    border-radius: 14px;
-    box-shadow: 0 2px 5px rgb(39 35 55 / 5%);
-}
-
-.compose-box:focus-within {
-    border-color: var(--accent-color);
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-color) 15%, transparent);
-}
-
-.compose-box textarea {
-    width: 100%;
-    min-height: 54px;
-    max-height: 92px;
-    flex: 1 1 auto;
-    resize: none;
-    padding: 3px 1px 8px;
-    color: var(--text-primary);
-    background: transparent;
-    border: 0;
-    outline: 0;
-    font-size: 15px;
-    line-height: 1.45;
-}
-
-.compose-box textarea:focus-visible {
-    outline: 0;
-}
-
-.compose-box textarea::placeholder {
-    color: var(--text-muted);
-}
-
-.compose-box textarea:disabled {
-    cursor: not-allowed;
-}
-
-.compose-footer {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-}
-
-.composer-hint {
-    color: var(--text-muted);
-    font-size: 12px;
-}
-
 .primary-button {
     display: inline-flex;
     min-height: 42px;
@@ -992,8 +825,10 @@ a:focus-visible {
     font-weight: 620;
 }
 
-.compose-footer .send-button {
-    margin-left: auto;
+/* Deepgram sets CTAs in Azeret Mono; for Temporal --font-action is the body font. */
+.primary-button,
+.new-message-button {
+    font-family: var(--font-action);
 }
 
 .primary-button:hover:not(:disabled) {
@@ -1022,7 +857,7 @@ a:focus-visible {
     background: var(--surface-background);
     border: 1px solid var(--border-color);
     border-radius: 24px;
-    box-shadow: 0 8px 30px rgb(46 37 67 / 7%);
+    box-shadow: 0 8px 30px rgb(var(--shadow-tint) / 7%);
 }
 
 /* The end-of-chat card is narrower and centers its whole body. */
@@ -1032,19 +867,6 @@ a:focus-visible {
     justify-content: center;
     padding: 48px 52px;
     text-align: center;
-}
-
-.focus-card-icon {
-    width: 64px;
-    height: 64px;
-    align-self: center;
-    margin-bottom: 19px;
-    background: var(--suggestion-background);
-    border-radius: 18px;
-}
-
-.focus-card-icon svg {
-    width: 33px;
 }
 
 .focus-card h1 {
@@ -1205,15 +1027,6 @@ a:focus-visible {
         font-size: 11px;
     }
 
-    .voice-site-header .voice-status {
-        grid-row: 1;
-        grid-column: 2;
-        justify-self: end;
-        gap: 6px;
-        padding: 4px 10px;
-        font-size: 10px;
-    }
-
     /* Stitch rules off the brand row from the action row. */
     .voice-site-header::after {
         content: "";
@@ -1223,11 +1036,6 @@ a:focus-visible {
         height: 1px;
         margin: 0 0 -6px;
         background: var(--border-color);
-    }
-
-    .voice-site-header .voice-indicator {
-        width: 7px;
-        height: 7px;
     }
 
     .voice-site-header .voice-header-controls {
@@ -1241,10 +1049,6 @@ a:focus-visible {
         border: 0;
         border-radius: 0;
         box-shadow: none;
-    }
-
-    .voice-site-header .voice-header-controls.has-voice-mode {
-        grid-template-columns: repeat(3, minmax(0, 1fr));
     }
 
     .voice-site-header .voice-control-button,
@@ -1356,6 +1160,11 @@ a:focus-visible {
         background: var(--transcript-background);
     }
 
+    /* The chat goes edge to edge on phones, but focus cards leave room for the photo. */
+    .main-content.focus-main {
+        background: transparent;
+    }
+
     .main-content.activity-main-content {
         padding: 0;
     }
@@ -1380,58 +1189,11 @@ a:focus-visible {
         box-shadow: none;
     }
 
-    .questions-heading {
-        min-height: 64px;
-        gap: 10px;
-        margin: 14px 16px;
-        padding: 0 14px;
-        border: 1px solid var(--border-color);
-        border-radius: 12px;
-        font-size: 17px;
-    }
-
-    .suggestions {
-        gap: 8px;
-        margin: -14px 16px 14px;
-        padding: 14px 16px;
-        border: 1px solid var(--border-color);
-        border-radius: 0 0 18px 18px;
-    }
-
-    .suggestions label {
-        font-size: 13px;
-    }
-
-    .suggestions select {
-        min-height: 43px;
-        font-size: 13px;
-    }
-
-    .suggestion-footer {
-        align-items: flex-end;
-    }
-
-    .suggestion-footer p {
-        max-width: 48%;
-        font-size: 11px;
-    }
-
-    .suggestion-send {
-        min-height: 38px;
-        padding: 0 12px;
-        font-size: 12px;
-        white-space: nowrap;
-    }
-
     .conversation-heading {
         min-height: 39px;
         padding: 0 16px;
         border: 0;
         font-size: 13px;
-    }
-
-    .transcript {
-        padding: 15px 16px 20px;
     }
 
     .message-content {
@@ -1485,66 +1247,6 @@ a:focus-visible {
         font-size: 12px;
     }
 
-    .sign-in-again-button {
-        width: 100%;
-        min-height: 44px;
-    }
-
-    .composer {
-        gap: 7px;
-        padding: 10px 16px max(12px, env(safe-area-inset-bottom));
-    }
-
-    .message-label {
-        font-size: 12px;
-    }
-
-    .compose-box {
-        min-height: 64px;
-        flex-direction: row;
-        align-items: flex-end;
-        gap: 8px;
-        padding: 8px 8px 8px 12px;
-        border-radius: 12px;
-    }
-
-    .compose-box textarea {
-        width: 0;
-        height: 44px;
-        min-height: 44px;
-        max-height: 68px;
-        padding: 10px 0;
-        font-size: 16px;
-    }
-
-    .compose-footer {
-        flex: 0 0 auto;
-    }
-
-    .compose-footer .send-button {
-        width: 44px;
-        min-height: 44px;
-        padding: 0;
-        border-radius: 8px;
-    }
-
-    .send-button > span {
-        display: none;
-    }
-
-    .composer:has(.composer-hint) .compose-box {
-        flex-direction: column;
-        align-items: stretch;
-    }
-
-    .composer:has(.composer-hint) textarea {
-        width: 100%;
-    }
-
-    .composer:has(.composer-hint) .compose-footer {
-        flex: 0 0 auto;
-    }
-
     .primary-button {
         min-height: 39px;
         padding: 0 14px;
@@ -1561,13 +1263,6 @@ a:focus-visible {
     .focus-card-end {
         padding: 32px 20px;
         border-radius: 20px;
-    }
-
-    .focus-card-icon {
-        width: 54px;
-        height: 54px;
-        margin-bottom: 14px;
-        border-radius: 16px;
     }
 
     .focus-card h1 {
@@ -1607,40 +1302,4 @@ a:focus-visible {
         animation-iteration-count: 1 !important;
         transition-duration: .01ms !important;
     }
-}
-
-.voice-indicator {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--text-muted);
-}
-
-.voice-listening .voice-indicator,
-.voice-speaking .voice-indicator,
-.voice-thinking .voice-indicator,
-.voice-connecting .voice-indicator {
-    background: var(--accent-color);
-    animation: voice-pulse 1.2s ease-in-out infinite;
-}
-
-.voice-speaking .voice-indicator {
-    animation-duration: 0.6s;
-}
-
-.voice-disconnected .voice-indicator {
-    background: var(--error-text);
-}
-
-.voice-status.is-muted .voice-indicator {
-    background: var(--text-muted);
-    animation: none;
-}
-
-@keyframes voice-pulse {
-    50% { opacity: 0.35; transform: scale(0.8); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-    .voice-indicator { animation: none !important; }
 }

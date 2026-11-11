@@ -216,6 +216,39 @@ public sealed class RideBookingService(
         }
     }
 
+    /// <summary>
+    /// Removes every ride of one stay so a guest can start over. Booking workflows are terminated,
+    /// not cancelled: cancellation refuses picked-up rides, and a surviving workflow would keep
+    /// publishing status into the reset stay. Safe to repeat.
+    /// </summary>
+    public async Task PurgeStayAsync(
+        Guid pathStayId,
+        VerifiedRideScope scope,
+        CancellationToken cancellationToken)
+    {
+        if (pathStayId != scope.StayId)
+        {
+            throw RideErrors.InvalidRequest("The stay in the path does not match the verified stay scope.");
+        }
+
+        var rideIds = await repository.ListStayRideIdsAsync(scope.GuestId, scope.StayId, cancellationToken);
+        foreach (var rideId in rideIds)
+        {
+            try
+            {
+                await temporalClient.GetWorkflowHandle(rideId.ToString("N")).TerminateAsync(
+                    "Stay reset by guest",
+                    new WorkflowTerminateOptions { Rpc = new() { CancellationToken = cancellationToken } });
+            }
+            catch (RpcException exception) when (exception.Code == RpcException.StatusCode.NotFound)
+            {
+                // Already completed, cancelled, or terminated by an earlier purge attempt.
+            }
+        }
+
+        await repository.DeleteStayRidesAsync(scope.GuestId, scope.StayId, cancellationToken);
+    }
+
     private static void ValidateRequest(RideBookingRequest request)
     {
         if (request.GuestId == Guid.Empty || request.StayId == Guid.Empty)

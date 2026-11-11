@@ -188,7 +188,6 @@ var activities = new HotelKnowledgeActivities(
     new EmbeddingModelIdentityStore(dataSource),
     embeddingGenerator,
     embeddingOptions);
-var activityEnvironment = new ActivityEnvironment();
 var cases = package["cases"]!.AsArray().Select(node => node!).ToArray();
 var caseResults = new List<CaseResult>();
 foreach (var evalCase in cases)
@@ -208,6 +207,17 @@ foreach (var evalCase in cases)
         .Take(FinalK)
         .Select(chunk => ToPassage(chunk.Evidence, chunk.Rank))
         .ToArray();
+    // A fresh context per case, started now with production's allowance: ActivityCallBudget derives
+    // each provider call's bound from StartedTime + StartToCloseTimeout, so one environment shared
+    // across the run left every later case with an expired 1 ms bound.
+    var activityEnvironment = new ActivityEnvironment
+    {
+        Info = ActivityEnvironment.DefaultInfo with
+        {
+            StartedTime = DateTime.UtcNow,
+            StartToCloseTimeout = ConciergeStayWorkflow.RetrievalActivityTimeout,
+        },
+    };
     var combinedResult = await activityEnvironment.RunAsync(
         () => activities.RetrieveAsync(new HotelRetrievalRequest(question)));
     var combined = combinedResult.Evidence

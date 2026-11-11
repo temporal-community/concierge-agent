@@ -1,0 +1,413 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Concierge Voice Flow</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Azeret+Mono:wght@400;500;600&family=Work+Sans:wght@400;500;600;700;800&display=swap">
+<style>
+/* Layout: one horizontal pipeline (guest → relay → Deepgram → Think → stay workflow), request lane on top, reply lane below, then the numbered turn. */
+:root {
+  --bg: #F3F4F8;
+  --surface: #FFFFFF;
+  --line: #CDD1DE;
+  --fg: #14151A;
+  --muted: #545A6C;
+  --edge: #3F4454;
+  --uv: #444CE7;          /* Temporal UV */
+  --on-uv: #FFFFFF;
+  --uv-ink: #2F35A8;
+  --glass: #00B2FF;       /* Deepgram Glass */
+  --on-glass: #06121A;
+  --glass-wash: #DCF3FF;
+  --glass-ink: #00618A;
+  --hot: #7F39FF;         /* Deepgram LED on light, Fuchsia on dark */
+  --on-hot: #FFFFFF;
+  --font-body: "Work Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "Azeret Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0E0F13; --surface: #1A1B21; --line: #2F313B; --fg: #F1F2F6; --muted: #A3A8B6;
+    --edge: #B9BDCA; --uv: #444CE7; --on-uv: #FFFFFF; --uv-ink: #B5B8F7; --glass: #00B2FF;
+    --on-glass: #06121A; --glass-wash: #0A2838; --glass-ink: #7FD6FF; --hot: #E042FF; --on-hot: #14151A;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0E0F13; --surface: #1A1B21; --line: #2F313B; --fg: #F1F2F6; --muted: #A3A8B6;
+  --edge: #B9BDCA; --uv: #444CE7; --on-uv: #FFFFFF; --uv-ink: #B5B8F7; --glass: #00B2FF;
+  --on-glass: #06121A; --glass-wash: #0A2838; --glass-ink: #7FD6FF; --hot: #E042FF; --on-hot: #14151A;
+  color-scheme: dark;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.55;
+}
+.page {
+  max-width: 1040px;
+  margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 48px 64px;
+  display: grid;
+  gap: 40px;
+}
+
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 0 0 14px;
+}
+h1 {
+  font-size: clamp(32px, 5.6vw, 56px);
+  line-height: 1.04;
+  letter-spacing: -0.025em;
+  font-weight: 800;
+  margin: 0;
+  text-wrap: balance;
+  max-width: 18ch;
+}
+h1 .dg { color: var(--glass-ink); }
+h1 .tp { color: var(--uv-ink); }
+.lede {
+  margin: 18px 0 0;
+  max-width: 62ch;
+  font-size: 18px;
+  color: var(--muted);
+}
+code {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  color: var(--fg);
+}
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  overflow: hidden;
+  margin: 0;
+}
+.stat {
+  background: var(--surface);
+  padding: 18px 20px;
+  display: grid;
+  gap: 2px;
+  align-content: start;
+}
+.stat dd {
+  margin: 0;
+  font-size: 40px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+.stat dd small { font-size: 0.5em; font-weight: 700; letter-spacing: 0; margin-left: 3px; }
+.stat dt { order: 2; font-size: 14px; font-weight: 600; }
+.stat .note { order: 3; margin: 0; font-family: var(--font-mono); font-size: 11px; color: var(--muted); }
+
+.legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 22px;
+  font-size: 14px;
+}
+.legend li { display: flex; align-items: center; gap: 8px; }
+.legend b { font-weight: 600; }
+.legend .dim { color: var(--muted); }
+.sw { width: 16px; height: 16px; border-radius: 4px; flex: none; border: 1.5px solid transparent; }
+.sw.dg { background: var(--glass); }
+.sw.dgs { background: var(--glass-wash); border-color: var(--glass); }
+.sw.tp { background: var(--uv); }
+.sw.hot { background: var(--hot); border-radius: 50%; }
+
+figure { margin: 0; display: grid; gap: 14px; }
+.map-scroll {
+  overflow-x: auto;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 20px 16px 12px;
+}
+.map-scroll svg { display: block; width: 100%; min-width: 780px; height: auto; }
+figcaption { font-size: 14px; color: var(--muted); max-width: 70ch; }
+
+svg .n { fill: var(--surface); stroke: var(--line); stroke-width: 1.2; }
+svg .n-dg { fill: var(--glass); }
+svg .n-dg-soft { fill: var(--glass-wash); stroke: var(--glass); stroke-width: 1.5; }
+svg .n-tp { fill: var(--uv); }
+svg .e { fill: none; stroke: var(--edge); stroke-width: 1.6; }
+svg .e-back { fill: none; stroke: var(--edge); stroke-width: 1.6; stroke-dasharray: 5 4; }
+svg .ahf { fill: var(--edge); }
+svg .t { fill: var(--fg); font-family: var(--font-body); font-size: 14px; font-weight: 700; }
+svg .t-on-glass { fill: var(--on-glass); }
+svg .t-on-uv { fill: var(--on-uv); }
+svg .s { fill: var(--muted); font-family: var(--font-mono); font-size: 10px; }
+svg .s-on-glass { fill: var(--on-glass); }
+svg .s-on-uv { fill: var(--on-uv); opacity: 0.88; }
+svg .lbl { fill: var(--muted); font-family: var(--font-mono); font-size: 10.5px; font-weight: 500; }
+svg .zl { fill: var(--muted); font-family: var(--font-mono); font-size: 9.5px; font-weight: 600; letter-spacing: 0.12em; }
+svg .tunnel { fill: var(--surface); stroke: var(--edge); stroke-width: 1.2; }
+svg .tt { fill: var(--fg); font-family: var(--font-mono); font-size: 9.5px; font-weight: 600; letter-spacing: 0.06em; }
+svg .bdg { fill: var(--hot); }
+svg .bdt { fill: var(--on-hot); font-family: var(--font-body); font-size: 11.5px; font-weight: 800; }
+
+h2 {
+  font-size: 26px;
+  letter-spacing: -0.015em;
+  font-weight: 700;
+  margin: 0 0 18px;
+  text-wrap: balance;
+}
+.steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+  gap: 14px;
+}
+.step {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 18px 20px 20px;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 14px;
+  align-content: start;
+  min-width: 0;
+}
+.step .num {
+  grid-row: span 2;
+  width: 30px; height: 30px; border-radius: 50%;
+  background: var(--hot); color: var(--on-hot);
+  display: grid; place-items: center;
+  font-weight: 800; font-size: 14px;
+}
+.step h3 { margin: 3px 0 0; font-size: 16px; font-weight: 700; }
+.step p { margin: 0; font-size: 14.5px; color: var(--muted); min-width: 0; }
+
+.bargein {
+  background: var(--glass-wash);
+  border: 1.5px solid var(--glass);
+  border-radius: 16px;
+  padding: 22px 24px;
+  display: grid;
+  gap: 14px;
+}
+.bargein h2 { margin: 0; font-size: 22px; }
+.bargein ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px 20px;
+  counter-reset: b;
+}
+.bargein li {
+  counter-increment: b;
+  font-size: 14.5px;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px;
+  min-width: 0;
+}
+.bargein li::before {
+  content: counter(b, upper-alpha);
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--glass-ink);
+  border: 1.5px solid var(--glass);
+  border-radius: 6px;
+  width: 22px; height: 22px;
+  display: grid; place-items: center;
+}
+
+footer {
+  border-top: 1px solid var(--line);
+  padding-top: 18px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 24px;
+}
+</style>
+</head>
+<body>
+
+<main class="page">
+  <header>
+    <p class="eyebrow">Hotel ZGY · Concierge Agent · Voice</p>
+    <h1><span class="dg">Deepgram</span> hears and speaks. <span class="tp">The concierge</span> does the thinking.</h1>
+    <p class="lede">The guest talks to the browser. Deepgram's Voice Agent turns speech into text and text back into speech, but its "think" step calls our own endpoint, so a spoken question runs through the same stay workflow as a typed one.</p>
+  </header>
+
+  <dl class="stats">
+    <div class="stat"><dd>16<small>kHz</small></dd><dt>mic audio in</dt><p class="note">linear16 from the mic worklet</p></div>
+    <div class="stat"><dd>24<small>kHz</small></dd><dt>speech out</dt><p class="note">linear16 to the speaker worklet</p></div>
+    <div class="stat"><dd>0</dd><dt>Deepgram keys in the browser</dt><p class="note">the relay holds the API key</p></div>
+    <div class="stat"><dd>2<small>min</small></dd><dt>idle timeout</dt><p class="note">no speech ends an idle chat</p></div>
+  </dl>
+
+  <figure>
+    <ul class="legend" aria-label="Legend">
+      <li><span class="sw dg"></span><span><b>Deepgram</b> <span class="dim">speech in, speech out</span></span></li>
+      <li><span class="sw dgs"></span><span><b>Voice code in Concierge.Web</b> <span class="dim">relay and Think endpoint</span></span></li>
+      <li><span class="sw tp"></span><span><b>Temporal</b> <span class="dim">the guest's stay workflow</span></span></li>
+      <li><span class="sw hot"></span><span><b>Steps</b> <span class="dim">one spoken turn</span></span></li>
+    </ul>
+
+    <div class="map-scroll">
+      <svg viewBox="0 0 1060 352" role="img" aria-label="Voice pipeline. The browser streams 16 kHz mic audio to the voice relay in Concierge.Web, which forwards it to Deepgram's Voice Agent. Deepgram sends the transcript through the dev tunnel to the Think endpoint, which submits it as a SubmitTurn Update to the guest's stay workflow in Temporal. The workflow runs the AI model, hotel knowledge search, places and weather lookups, and rides as activities. Answer text streams back to the Think endpoint, then to Deepgram, which speaks it as 24 kHz audio through the relay to the browser.">
+        <defs>
+          <marker id="vah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" class="ahf"/>
+          </marker>
+        </defs>
+
+        <!-- Column labels -->
+        <text class="zl" x="85" y="46" text-anchor="middle">GUEST</text>
+        <text class="zl" x="307" y="46" text-anchor="middle">CONCIERGE.WEB</text>
+        <text class="zl" x="529" y="46" text-anchor="middle">DEEPGRAM CLOUD</text>
+        <text class="zl" x="751" y="46" text-anchor="middle">CONCIERGE.WEB</text>
+        <text class="zl" x="973" y="46" text-anchor="middle">TEMPORAL</text>
+
+        <!-- Pipeline nodes -->
+        <rect class="n" x="20" y="60" width="130" height="150" rx="12"/>
+        <text class="t" x="85" y="130" text-anchor="middle">Browser</text>
+        <text class="s" x="85" y="149" text-anchor="middle">mic + speaker</text>
+        <text class="s" x="85" y="163" text-anchor="middle">worklets</text>
+
+        <rect class="n-dg-soft" x="242" y="60" width="130" height="150" rx="12"/>
+        <text class="t" x="307" y="130" text-anchor="middle">Voice relay</text>
+        <text class="s" x="307" y="149" text-anchor="middle">WebSocket bridge</text>
+        <text class="s" x="307" y="163" text-anchor="middle">paces playback</text>
+
+        <rect class="n-dg" x="464" y="60" width="130" height="150" rx="12"/>
+        <text class="t t-on-glass" x="529" y="130" text-anchor="middle">Voice Agent</text>
+        <text class="s s-on-glass" x="529" y="149" text-anchor="middle">Flux listen</text>
+        <text class="s s-on-glass" x="529" y="163" text-anchor="middle">Flux speak</text>
+
+        <rect class="n-dg-soft" x="686" y="60" width="130" height="150" rx="12"/>
+        <text class="t" x="751" y="130" text-anchor="middle">Think endpoint</text>
+        <text class="s" x="751" y="149" text-anchor="middle">/v1/chat/</text>
+        <text class="s" x="751" y="163" text-anchor="middle">completions</text>
+
+        <rect class="n-tp" x="908" y="60" width="130" height="150" rx="12"/>
+        <text class="t t-on-uv" x="973" y="130" text-anchor="middle">Stay workflow</text>
+        <text class="s s-on-uv" x="973" y="149" text-anchor="middle">one per guest</text>
+        <text class="s s-on-uv" x="973" y="163" text-anchor="middle">same as chat</text>
+
+        <!-- Request lane (top, left to right) -->
+        <path class="e" d="M150,105 H242" marker-end="url(#vah)"/>
+        <text class="lbl" x="196" y="92" text-anchor="middle">mic 16 kHz</text>
+        <path class="e" d="M372,105 H464" marker-end="url(#vah)"/>
+        <text class="lbl" x="418" y="92" text-anchor="middle">audio</text>
+        <path class="e" d="M594,105 H686" marker-end="url(#vah)"/>
+        <text class="lbl" x="640" y="84" text-anchor="middle">transcript</text>
+        <path class="e" d="M816,105 H908" marker-end="url(#vah)"/>
+        <text class="lbl" x="862" y="92" text-anchor="middle">SubmitTurn</text>
+
+        <!-- Reply lane (bottom, right to left) -->
+        <path class="e-back" d="M908,165 H816" marker-end="url(#vah)"/>
+        <text class="lbl" x="862" y="186" text-anchor="middle">answer text</text>
+        <path class="e-back" d="M686,165 H594" marker-end="url(#vah)"/>
+        <text class="lbl" x="640" y="196" text-anchor="middle">text stream</text>
+        <path class="e-back" d="M464,165 H372" marker-end="url(#vah)"/>
+        <text class="lbl" x="418" y="186" text-anchor="middle">speech 24 kHz</text>
+        <path class="e-back" d="M242,165 H150" marker-end="url(#vah)"/>
+        <text class="lbl" x="196" y="186" text-anchor="middle">paced audio</text>
+
+        <!-- Dev tunnel gate between Deepgram and Think -->
+        <rect class="tunnel" x="629" y="92" width="22" height="86" rx="8"/>
+        <text class="tt" transform="translate(644 135) rotate(-90)" text-anchor="middle">DEV TUNNEL</text>
+
+        <!-- What a turn touches -->
+        <path class="e" d="M973,210 V246 H529 V276" marker-end="url(#vah)"/>
+        <path class="e" d="M677,246 V276" marker-end="url(#vah)"/>
+        <path class="e" d="M825,246 V276" marker-end="url(#vah)"/>
+        <path class="e" d="M973,246 V276" marker-end="url(#vah)"/>
+        <text class="lbl" x="965" y="236" text-anchor="end">runs as activities</text>
+        <text class="zl" x="440" y="304" text-anchor="end">WHAT A TURN CAN TOUCH</text>
+
+        <rect class="n" x="464" y="276" width="130" height="60" rx="10"/>
+        <text class="t" x="529" y="301" text-anchor="middle">AI model</text>
+        <text class="s" x="529" y="319" text-anchor="middle">Ollama or Foundry</text>
+
+        <rect class="n" x="612" y="276" width="130" height="60" rx="10"/>
+        <text class="t" x="677" y="301" text-anchor="middle">Hotel facts</text>
+        <text class="s" x="677" y="319" text-anchor="middle">pgvector search</text>
+
+        <rect class="n" x="760" y="276" width="130" height="60" rx="10"/>
+        <text class="t" x="825" y="301" text-anchor="middle">Places, weather</text>
+        <text class="s" x="825" y="319" text-anchor="middle">Geoapify, Open-Meteo</text>
+
+        <rect class="n" x="908" y="276" width="130" height="60" rx="10"/>
+        <text class="t" x="973" y="301" text-anchor="middle">Rides</text>
+        <text class="s" x="973" y="319" text-anchor="middle">ride service</text>
+
+        <!-- Step badges -->
+        <circle class="bdg" cx="168" cy="105" r="11"/><text class="bdt" x="168" y="109" text-anchor="middle">1</text>
+        <circle class="bdg" cx="390" cy="105" r="11"/><text class="bdt" x="390" y="109" text-anchor="middle">2</text>
+        <circle class="bdg" cx="611" cy="105" r="11"/><text class="bdt" x="611" y="109" text-anchor="middle">3</text>
+        <circle class="bdg" cx="834" cy="105" r="11"/><text class="bdt" x="834" y="109" text-anchor="middle">4</text>
+        <circle class="bdg" cx="890" cy="165" r="11"/><text class="bdt" x="890" y="169" text-anchor="middle">5</text>
+        <circle class="bdg" cx="224" cy="165" r="11"/><text class="bdt" x="224" y="169" text-anchor="middle">6</text>
+      </svg>
+    </div>
+    <figcaption>Solid arrows carry the guest's question to the right; dashed arrows carry the answer back. Deepgram is the only cloud hop, and it reaches the Think endpoint through the dev tunnel because Deepgram can only call a public HTTPS address.</figcaption>
+  </figure>
+
+  <section>
+    <h2>One spoken turn</h2>
+    <ol class="steps">
+      <li class="step"><span class="num">1</span><h3>Speak</h3><p>The browser's mic worklet streams 16 kHz audio over a WebSocket to the voice relay. The browser never connects to Deepgram itself.</p></li>
+      <li class="step"><span class="num">2</span><h3>Relay</h3><p>The relay opens a Voice Agent session with the server's API key, sends the settings (Flux listen model, Flux voice, our Think endpoint as the LLM) and forwards the audio.</p></li>
+      <li class="step"><span class="num">3</span><h3>Transcribe</h3><p>When the guest finishes speaking, Deepgram calls the Think endpoint through the dev tunnel with the transcript and the voice session's bearer token.</p></li>
+      <li class="step"><span class="num">4</span><h3>Think</h3><p>The Think endpoint submits the transcript as a <code>SubmitTurn</code> Update on the guest's stay workflow. It's the same path a typed question takes, so the turn also shows up in the chat.</p></li>
+      <li class="step"><span class="num">5</span><h3>Answer</h3><p>Answer text streams back as the model writes it. The Think endpoint returns it to Deepgram as streamed chat-completion chunks, and Deepgram starts speaking.</p></li>
+      <li class="step"><span class="num">6</span><h3>Play</h3><p>The relay paces the 24 kHz speech to the browser's speaker worklet, using the browser's playback acknowledgements so audio never runs far ahead.</p></li>
+    </ol>
+  </section>
+
+  <section class="bargein" aria-labelledby="bargein-h">
+    <h2 id="bargein-h">When the guest talks over the concierge</h2>
+    <ol>
+      <li><span>Deepgram hears the guest and sends <code>UserStartedSpeaking</code>.</span></li>
+      <li><span>The relay tells the browser to silence playback right away.</span></li>
+      <li><span>The browser confirms it's silent.</span></li>
+      <li><span>The relay marks the cut-off turn as interrupted in the stay workflow, and the chat shows it as "Interrupted".</span></li>
+    </ol>
+  </section>
+
+  <footer>
+    <span>Source: src/Concierge.Web/Voice and wwwroot/js/voice*.js</span>
+    <span>Full system: docs/architecture.html</span>
+    <span>Drawn 2026-11-09</span>
+  </footer>
+</main>
+</body>
+</html>

@@ -1,0 +1,28 @@
+@using Microsoft.AspNetCore.Components.AI
+
+@* Development only: the real failure behind a reply that reports one, carried as a
+   concierge_error_details call and drawn by a BlockRenderer under the concierge bubble. The server
+   sends it only in Development, so production pages never draw this. *@
+
+@if (Details is { Length: > 0 } details)
+{
+    <div class="agentic-error-details-row">
+        <details class="turn-error__details agentic-error-details">
+            <summary>Error details (development)</summary>
+            <pre>@details</pre>
+        </details>
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired]
+    public FunctionInvocationContentBlock Block { get; set; } = default!;
+
+    private string? Details => Block.Result?.Result switch
+    {
+        string text => text,
+        System.Text.Json.JsonElement { ValueKind: System.Text.Json.JsonValueKind.String } element => element.GetString(),
+        { } other => other.ToString(),
+        null => null,
+    };
+}

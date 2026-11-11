@@ -29,10 +29,12 @@ public static class ConciergeApiEndpoints
             HttpContext context,
             ILogger<IConciergeService> logger) =>
                 await ExecuteAsync(
-                    () => concierge.SubmitTurnAsync(
+                    // The failure detail is a Development diagnostic for the in-process AG-UI page;
+                    // remote clients (the public tunnel) never get it.
+                    async () => (await concierge.SubmitTurnAsync(
                         GetBearerCredential(context),
                         request!,
-                        context.RequestAborted),
+                        context.RequestAborted)) with { FailureDetail = null },
                     nameof(IConciergeService.SubmitTurnAsync),
                     logger));
 
@@ -59,6 +61,20 @@ public static class ConciergeApiEndpoints
                             context.RequestAborted);
                     },
                     nameof(IConciergeService.EndAsync),
+                    logger));
+
+        api.MapPost("/reset", async (
+            IConciergeService concierge,
+            HttpContext context,
+            ILogger<IConciergeService> logger) =>
+                await ExecuteNoContentAsync(
+                    async () =>
+                    {
+                        await concierge.ResetAsync(
+                            GetBearerCredential(context),
+                            context.RequestAborted);
+                    },
+                    nameof(IConciergeService.ResetAsync),
                     logger));
 
         return endpoints;

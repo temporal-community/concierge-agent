@@ -4,16 +4,25 @@
         <circle cx="12" cy="12" r="4" />
         <path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5l1.5 1.5M5 19l1.5-1.5M17.5 6.5 19 5" />
     </svg>
+    @* A closed select shows only the option text, so each option names its brand. *@
     <select aria-label="Color theme" value="@Theme" @onchange="ThemeChanged">
-        <option value="system">System</option>
-        <option value="light">Light</option>
-        <option value="dark">Dark</option>
+        <optgroup label="Temporal">
+            <option value="temporal-light">Temporal · Light</option>
+            <option value="temporal-dark">Temporal · Dark</option>
+            <option value="temporal-system">Temporal · System</option>
+        </optgroup>
+        <optgroup label="Deepgram">
+            <option value="deepgram-light">Deepgram · Light</option>
+            <option value="deepgram-dark">Deepgram · Dark</option>
+            <option value="deepgram-system">Deepgram · System</option>
+        </optgroup>
     </select>
 </label>
 
 @code {
+    /// <summary>The selected "{brand}-{mode}" value; see <see cref="ThemeChoice"/>.</summary>
     [Parameter, EditorRequired]
-    public string Theme { get; set; } = "system";
+    public string Theme { get; set; } = ThemeChoice.Default;
 
     [Parameter, EditorRequired]
     public EventCallback<ChangeEventArgs> ThemeChanged { get; set; }

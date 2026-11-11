@@ -1,15 +1,21 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net11.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <BlazorDisableThrowNavigationException>true</BlazorDisableThrowNavigationException>
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="AGUI.Client" Version="1.0.1" />
+    <PackageReference Include="AGUI.Server" Version="1.0.1" />
     <PackageReference Include="HtmlSanitizer" Version="9.2.1039" />
     <PackageReference Include="Markdig" Version="1.5.1" />
+    <PackageReference Include="Microsoft.Agents.AI" Version="1.27.0" />
+    <PackageReference Include="Microsoft.Agents.AI.Hosting.AGUI.AspNetCore" Version="1.27.0-preview.261030.1" />
+    <PackageReference Include="Microsoft.AspNetCore.Components.AI" Version="0.1.0-preview.1.26466.103" />
+    <PackageReference Include="Npgsql" Version="10.0.3" />
     <PackageReference Include="Temporalio" Version="1.21.0" />
     <PackageReference Include="Temporalio.Extensions.Hosting" Version="1.21.0" />
     <PackageReference Include="TemporalCommunity.Extensions.AI" Version="0.14.2" />

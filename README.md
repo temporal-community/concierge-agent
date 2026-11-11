@@ -1,13 +1,13 @@
 # Concierge Agent
 
 A virtual concierge for Hotel ZGY, a fictional hotel in Wynwood, Miami. Built
-with .NET 10, ASP.NET Core, Aspire, Temporal, and Deepgram’s Voice Agent API.
+with .NET 11, ASP.NET Core, Aspire, Temporal, and Deepgram’s Voice Agent API.
 Guests can use text or browser voice to ask about the hotel, check weather,
 find nearby places and more
 
 ## Prerequisites
 
-- [.NET 10 SDK](https://dotnet.microsoft.com/download)
+- [.NET 11 SDK](https://dotnet.microsoft.com/download/dotnet/11.0) (11.0.100-rc.3 or later; pinned in `global.json`)
 - [Docker](https://www.docker.com/products/)
 - [just](https://just.systems)
 - [Aspire CLI](https://aspire.dev)
@@ -120,6 +120,9 @@ aspire stop --non-interactive --apphost src/Concierge.AppHost/Concierge.AppHost.
 3. Check in using a demo guest's last name and room number from the table below.
 
 Startup prepares the database, demo stays, and Markdown knowledge base.
+
+To restart one guest's demo, use **Start over** in the chat header. It deletes that stay's
+conversation and rides and keeps you checked in. Use `just reset` only to wipe every stay.
 
 #### Demo guest check-in information
 

@@ -1,0 +1,244 @@
+@page "/"
+@* The original preview address keeps working. *@
+@page "/agentic"
+@rendermode InteractiveServer
+@using Concierge.Web.Agentic
+@using Concierge.Web.Components.Agentic
+@using Concierge.Web.Components.Shared
+@using Microsoft.AspNetCore.Components.AI
+
+@* The guest chat (ADR 0015): AG-UI with Microsoft.AspNetCore.Components.AI, in the app's shell and
+   styles. Voice lives in the message input, as in the AgenticUI sample. *@
+
+<PageTitle>Hotel ZGY Concierge</PageTitle>
+<HeadContent>
+    <link rel="stylesheet" href="_content/Microsoft.AspNetCore.Components.AI/ai-chat.css" />
+    <link rel="stylesheet" href="css/agentic.css" />
+</HeadContent>
+
+<div class="page-shell" @onkeydown="HandlePageKeyDown">
+    @if (showResetConfirmation)
+    {
+        <FocusPage Theme="@theme" ThemeChanged="ChangeThemeAsync">
+            <FocusCard Modifier="focus-card-end" TitleId="reset-state-title" Title="Start over?"
+                       DescriptionId="reset-state-description"
+                       Description="This deletes this stay's conversation and cancels its rides. You'll stay checked in."
+                       role="alertdialog" aria-modal="true"
+                       aria-labelledby="reset-state-title" aria-describedby="reset-state-description">
+                @if (!string.IsNullOrWhiteSpace(resetError))
+                {
+                    <div class="inline-error end-error" role="alert">
+                        <span class="error-symbol" aria-hidden="true">!</span>
+                        <span>@resetError</span>
+                    </div>
+                }
+                <button class="primary-button focus-card-action" type="button" @onclick="ResetStayAsync" disabled="@isResetting">
+                    @(isResetting ? "Starting over…" : "Start over")
+                </button>
+                <button class="secondary-button focus-card-action focus-card-secondary-action" type="button"
+                        @onclick="CancelResetAsync" disabled="@isResetting">
+                    Keep chatting
+                </button>
+            </FocusCard>
+        </FocusPage>
+    }
+    else if (showEndConfirmation || chatEnded)
+    {
+        <FocusPage Theme="@theme" ThemeChanged="ChangeThemeAsync">
+            <FocusCard Modifier="focus-card-end" TitleId="end-state-title"
+                       Title="@(chatEnded ? (chatEndedForInactivity ? "Chat ended due to inactivity" : "Chat ended") : "End this chat?")"
+                       DescriptionId="end-state-description"
+                       Description="@(chatEnded
+                           ? "Your stay conversation history has not been deleted. Verify your stay again to resume while eligible."
+                           : "This ends your current interaction, not your stay conversation history. You can verify your stay again to resume while eligible.")"
+                       role="@(showEndConfirmation ? "alertdialog" : "status")"
+                       aria-modal="@(showEndConfirmation ? "true" : null)"
+                       aria-labelledby="end-state-title" aria-describedby="end-state-description">
+                @if (showEndConfirmation && !string.IsNullOrWhiteSpace(endError))
+                {
+                    <div class="inline-error end-error" role="alert">
+                        <span class="error-symbol" aria-hidden="true">!</span>
+                        <span>@endError</span>
+                    </div>
+                }
+                @if (chatEnded)
+                {
+                    <button class="primary-button focus-card-action" type="button" @onclick="VerifyStayAgain">
+                        Verify stay again
+                    </button>
+                }
+                else
+                {
+                    <button class="primary-button focus-card-action" type="button" @onclick="EndInteractionAsync" disabled="@isEnding">
+                        @(isEnding ? "Ending…" : "End chat")
+                    </button>
+                    <button class="secondary-button focus-card-action focus-card-secondary-action" type="button"
+                            @onclick="CancelEndAsync" disabled="@isEnding">
+                        Keep chatting
+                    </button>
+                }
+            </FocusCard>
+        </FocusPage>
+    }
+    else if (ready && session is null)
+    {
+        <FocusPage Theme="@theme" ThemeChanged="ChangeThemeAsync">
+            <FocusCard TitleId="verify-title" Title="Verify your stay"
+                       Description="Enter your last name and room number to continue." aria-labelledby="verify-title">
+                @if (!string.IsNullOrWhiteSpace(verificationError))
+                {
+                    <div class="inline-error verification-error" role="alert">
+                        <span class="error-symbol" aria-hidden="true">!</span>
+                        <span>@verificationError</span>
+                    </div>
+                }
+                <form class="verification-form" @onsubmit="VerifyAsync" @onsubmit:preventDefault>
+                    <label for="last-name">Last name</label>
+                    <input id="last-name" type="text" placeholder="Last name" autocomplete="family-name"
+                           maxlength="@(global::Concierge.Contracts.ConciergeVerifiedGuest.MaxNameLength)" @bind="lastName" />
+                    <label for="room-number">Room number</label>
+                    <input id="room-number" type="text" placeholder="Room number" inputmode="numeric"
+                           autocomplete="off" maxlength="4" @bind="roomNumber" />
+                    <p class="field-hint">Enter the room number exactly as provided.</p>
+                    <button class="primary-button focus-card-action" type="submit" disabled="@isVerifying">
+                        @(isVerifying ? "Verifying…" : "Verify and continue")
+                    </button>
+                </form>
+            </FocusCard>
+        </FocusPage>
+    }
+    else
+    {
+        <SiteHeader VoiceChrome="@(session is not null)">
+            <Actions>
+                <div class="voice-header-controls" role="group" aria-label="Chat controls">
+                    @if (session is not null && rides is not null)
+                    {
+                        <button class="voice-control-button activity-button" type="button"
+                                aria-expanded="@rides.IsOpen" aria-controls="ride-activity-panel"
+                                aria-label="@rides.AccessibleName" @onclick="ToggleActivityAsync">
+                            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" />
+                                <path d="M10 21h4" />
+                            </svg>
+                            <span>Activity</span>
+                            @if (rides.UnreadCount > 0)
+                            {
+                                <span class="activity-unread-badge" aria-hidden="true">@rides.Badge</span>
+                            }
+                        </button>
+                        <button class="voice-end-voice-button" type="button" aria-label="Start over"
+                                @onclick="StartOverAsync" disabled="@(isEnding || isResetting || runInFlight)">
+                            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                <path d="M4 4v5h5M4.6 15a8 8 0 1 0 1.8-8.3L4 9" />
+                            </svg>
+                            <span>Start over</span>
+                        </button>
+                        <button class="end-chat-button voice-end-chat-button" type="button" aria-label="End chat"
+                                @onclick="EndChatAsync" disabled="@isEnding">
+                            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                <path d="m6 6 12 12M18 6 6 18" />
+                            </svg>
+                            <span>End chat</span>
+                        </button>
+                    }
+                    <ThemePicker Theme="@theme" ThemeChanged="ChangeThemeAsync" />
+                </div>
+            </Actions>
+        </SiteHeader>
+
+        <main class="main-content @(rides?.IsOpen == true ? "activity-main-content" : "")">
+            @if (!ready || agent is null || thread is null)
+            {
+                <div class="startup-message" role="status">Preparing your chat…</div>
+            }
+            else
+            {
+                <div class="activity-layout @(rides?.IsOpen == true ? "activity-layout-open" : "")">
+                    <section class="chat-panel" aria-label="Hotel concierge chat">
+                        <div class="conversation-heading">
+                            <span>YOUR STAY CONVERSATION</span>
+                        </div>
+                        @* ChatPage's parts, composed by hand: the history restore has to run inside the
+                           AgentBoundary and before MessageList first draws (see RestoreConversation).
+                           sc-ai-root holds the kit's theme (agentic.css maps it to app.css tokens). *@
+                        <AgentBoundary @key="agentGeneration" Agent="agent">
+                            <div class="@AgenticConcierge.ChatRootClass">
+                                <RestoreConversation BusyChanged="OnBusyChangedAsync" Restored="OnRestored" />
+                                <div class="agentic-transcript" @ref="transcriptElement" aria-label="Stay conversation">
+                                    @* Re-keyed after a live re-restore: MessageList only builds its turn
+                                       renderers when it first sees a context. *@
+                                    <MessageList @key="listGeneration">
+                                        <ChildContent>
+                                            <BlockRenderer TBlock="RichContentBlock" Context="block">
+                                                <StayMessage Block="block" Thread="thread" />
+                                            </BlockRenderer>
+                                            <BlockRenderer TBlock="FunctionInvocationContentBlock" Context="tool"
+                                                           When="@(tool => tool.ToolName == AgenticConcierge.RideCardTool)">
+                                                <RideCard Block="tool" />
+                                            </BlockRenderer>
+                                            <BlockRenderer TBlock="FunctionInvocationContentBlock" Context="tool"
+                                                           When="@(tool => tool.ToolName == AgenticConcierge.ErrorDetailsTool)">
+                                                <ErrorDetails Block="tool" />
+                                            </BlockRenderer>
+                                            <BlockRenderer TBlock="FunctionInvocationContentBlock" Context="tool"
+                                                           When="@(tool => tool.ToolName == AgenticConcierge.AnswerCorrectionTool)">
+                                                <AnswerCorrection Block="tool" Corrected="OnAnswerCorrectedAsync" />
+                                            </BlockRenderer>
+                                        </ChildContent>
+                                        <EmptyContent>
+                                            <SuggestionChips />
+                                        </EmptyContent>
+                                        <Footer Context="footerContext">
+                                            <ChatFooter Context="footerContext" DeviceQuestion="@deviceQuestion" FailureDetails="FailureDetails" />
+                                        </Footer>
+                                    </MessageList>
+                                    <button class="new-message-button" type="button" hidden>New message ↓</button>
+                                </div>
+                                @if (voice?.Mode == true && (voice.IdleWarning || voice.EndReason == "idle_timeout"))
+                                {
+                                    <div class="session-expired" role="status" aria-live="polite" aria-atomic="true">
+                                        <span class="expired-icon" aria-hidden="true">!</span>
+                                        <div class="expired-copy">
+                                            @if (voice.IdleWarning)
+                                            {
+                                                <strong>Chat ending soon</strong>
+                                                <span>This chat will end within 30 seconds due to inactivity.</span>
+                                                <small>@(voice.State == "paused" ? "Resume voice and speak to continue." : "Speak to continue.")</small>
+                                            }
+                                            else
+                                            {
+                                                <strong>Voice stopped after inactivity</strong>
+                                                <span>@(isEnding ? "Ending this chat…" : "Reconnect voice to speak again, or continue with text.")</span>
+                                            }
+                                        </div>
+                                    </div>
+                                }
+                                <div class="sc-ai-chat-page__footer">
+                                    <div class="sc-ai-chat-page__input-container">
+                                        <VoiceStatus Voice="voice" />
+                                        <MessageInput Placeholder="Ask the concierge…">
+                                            @* LeadingActions, shown on the right by agentic.css: in this kit version
+                                               TrailingActions replaces the Send button. *@
+                                            <LeadingActions>
+                                                <VoiceInputControls Voice="voice" CanStart="CanStartVoice"
+                                                                    OnMic="OnMicAsync" OnSpeaker="OnSpeakerAsync" />
+                                            </LeadingActions>
+                                        </MessageInput>
+                                    </div>
+                                </div>
+                            </div>
+                        </AgentBoundary>
+                    </section>
+                    @if (rides is not null)
+                    {
+                        <RideActivityPanel Entries="@rides.Entries" ReadEntryKeys="@rides.ReadEntryKeys"
+                                           IsPaused="@rides.IsPaused" IsReconnecting="@rides.IsReconnecting"
+                                           SubscriptionError="@rides.Error" IsOpen="@rides.IsOpen"
+                                           OnClose="CloseActivity" />
+                    }
+                </div>
+            }
+        </main>
+    }
+</div>

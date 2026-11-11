@@ -225,6 +225,56 @@ public sealed class RideServiceApiTests(PostgreSqlFixture postgreSql)
         Assert.Equal(HttpStatusCode.Conflict, foreignStayBooking.StatusCode);
     }
 
+    [Fact]
+    public async Task PurgeTerminatesAndDeletesOnlyTheScopedStaysRidesIncludingPickedUp()
+    {
+        // Real time: the immediate ride must reach PickedUp, which cancellation would refuse.
+        var now = DateTimeOffset.UtcNow;
+        await using var host = await RideTestHost.StartAsync(postgreSql, now);
+        var checkoutDate = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(now, HotelTimeZone).DateTime).AddDays(1);
+        var pickedUp = (await ReadRideAsync(await host.BookAsync(
+            Booking("purge-immediate", null, immediate: true, checkoutDate: checkoutDate) with
+            {
+                RouteDurationSeconds = 3600,
+            })))!;
+        var scheduled = (await ReadRideAsync(await host.BookAsync(
+            Booking("purge-scheduled", now.AddHours(2), checkoutDate: checkoutDate))))!;
+        var otherStayId = Guid.NewGuid();
+        var otherStay = (await ReadRideAsync(await host.BookAsync(
+            Booking("purge-other-stay", now.AddHours(2), checkoutDate: checkoutDate) with { StayId = otherStayId })))!;
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(10);
+        while ((await ReadOwnedRideAsync(host, pickedUp.Id))?.Status != "PickedUp" && DateTimeOffset.UtcNow < deadline)
+        {
+            await Task.Delay(50);
+        }
+        Assert.Equal("PickedUp", (await ReadOwnedRideAsync(host, pickedUp.Id))?.Status);
+
+        using var mismatched = await host.PurgeAsync(Guid.NewGuid(), GuestId, StayId);
+        Assert.Equal(HttpStatusCode.BadRequest, mismatched.StatusCode);
+        using var purge = await host.PurgeAsync(StayId, GuestId, StayId);
+        Assert.Equal(HttpStatusCode.NoContent, purge.StatusCode);
+
+        foreach (var ride in new[] { pickedUp, scheduled })
+        {
+            var description = await host.Environment.Client.GetWorkflowHandle(ride.Id.ToString("N")).DescribeAsync();
+            Assert.Equal(WorkflowExecutionStatus.Terminated, description.Status);
+        }
+        Assert.Equal(0L, await host.ScalarAsync<long>(
+            $"SELECT COUNT(*) FROM rides WHERE stay_id = '{StayId}';"));
+        Assert.Equal(0L, await host.ScalarAsync<long>(
+            $"SELECT COUNT(*) FROM ride_events WHERE ride_id IN ('{pickedUp.Id}', '{scheduled.Id}');"));
+        Assert.Empty((await (await host.GetListAsync(GuestId, GuestId, StayId, "upcoming"))
+            .Content.ReadFromJsonAsync<RideResponse[]>())!);
+        Assert.Empty((await (await host.GetListAsync(GuestId, GuestId, StayId, "past"))
+            .Content.ReadFromJsonAsync<RideResponse[]>())!);
+        using var otherRead = await host.GetAsync($"/rides/{otherStay.Id}", GuestId, otherStayId);
+        Assert.Equal(HttpStatusCode.OK, otherRead.StatusCode);
+
+        // A retried purge (for example, an activity retry after a lost response) is a no-op.
+        using var repeated = await host.PurgeAsync(StayId, GuestId, StayId);
+        Assert.Equal(HttpStatusCode.NoContent, repeated.StatusCode);
+    }
+
     [Theory]
     [InlineData("2026-03-08T12:00:00+00:00", "2026-03-08", "2026-03-09T03:59:59.9999999+00:00", true)]
     [InlineData("2026-03-08T12:00:00+00:00", "2026-03-08", "2026-03-09T04:00:00+00:00", false)]
@@ -949,6 +999,9 @@ public sealed class RideServiceApiTests(PostgreSqlFixture postgreSql)
 
         public Task<HttpResponseMessage> GetAsync(string path, Guid guestId, Guid stayId) =>
             SendWithScope(HttpMethod.Get, path, guestId, stayId);
+
+        public Task<HttpResponseMessage> PurgeAsync(Guid pathStayId, Guid guestId, Guid stayId) =>
+            SendWithScope(HttpMethod.Post, $"/stays/{pathStayId}/rides/purge", guestId, stayId);
 
         public Task<HttpResponseMessage> DeleteAsync(Guid id, Guid guestId, Guid stayId) =>
             SendWithScope(HttpMethod.Delete, $"/rides/{id}", guestId, stayId);

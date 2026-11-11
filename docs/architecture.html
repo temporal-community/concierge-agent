@@ -1,0 +1,487 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Concierge Agent Architecture</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Azeret+Mono:wght@400;500;600&family=Work+Sans:wght@400;500;600;700;800&display=swap">
+<style>
+/* Layout: poster column — thesis, legend + numbers, one layered system map (clients top → data bottom), then the numbered turn. */
+:root {
+  --bg: #F3F4F8;
+  --surface: #FFFFFF;
+  --band: #E7E9F1;
+  --line: #CDD1DE;
+  --fg: #14151A;
+  --muted: #545A6C;
+  --edge: #3F4454;
+  --uv: #444CE7;          /* Temporal UV */
+  --on-uv: #FFFFFF;
+  --uv-wash: #E6E7FC;
+  --uv-ink: #2F35A8;
+  --glass: #00B2FF;       /* Deepgram Glass */
+  --on-glass: #06121A;
+  --glass-wash: #DCF3FF;
+  --glass-ink: #00618A;
+  --hot: #7F39FF;         /* Deepgram LED on light, Fuchsia on dark */
+  --on-hot: #FFFFFF;
+  --ink: #14151A;
+  --on-ink: #F3F4F8;
+  --font-body: "Work Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "Azeret Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0E0F13; --surface: #1A1B21; --band: #16171D; --line: #2F313B; --fg: #F1F2F6;
+    --muted: #A3A8B6; --edge: #B9BDCA; --uv: #444CE7; --on-uv: #FFFFFF; --uv-wash: #1E2046;
+    --uv-ink: #B5B8F7; --glass: #00B2FF; --on-glass: #06121A; --glass-wash: #0A2838;
+    --glass-ink: #7FD6FF; --hot: #E042FF; --on-hot: #14151A; --ink: #F1F2F6; --on-ink: #0E0F13;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0E0F13; --surface: #1A1B21; --band: #16171D; --line: #2F313B; --fg: #F1F2F6;
+  --muted: #A3A8B6; --edge: #B9BDCA; --uv: #444CE7; --on-uv: #FFFFFF; --uv-wash: #1E2046;
+  --uv-ink: #B5B8F7; --glass: #00B2FF; --on-glass: #06121A; --glass-wash: #0A2838;
+  --glass-ink: #7FD6FF; --hot: #E042FF; --on-hot: #14151A; --ink: #F1F2F6; --on-ink: #0E0F13;
+  color-scheme: dark;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.55;
+}
+.page {
+  max-width: 1040px;
+  margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 48px 64px;
+  display: grid;
+  gap: 40px;
+}
+
+/* Header */
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 0 0 14px;
+}
+h1 {
+  font-size: clamp(32px, 5.6vw, 56px);
+  line-height: 1.04;
+  letter-spacing: -0.025em;
+  font-weight: 800;
+  margin: 0;
+  text-wrap: balance;
+  max-width: 16ch;
+}
+h1 .uv { color: var(--uv-ink); }
+.lede {
+  margin: 18px 0 0;
+  max-width: 62ch;
+  font-size: 18px;
+  color: var(--muted);
+}
+.lede code, .step code, figcaption code {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  color: var(--fg);
+}
+
+/* Numbers */
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  overflow: hidden;
+  margin: 0;
+}
+.stat {
+  background: var(--surface);
+  padding: 18px 20px;
+  display: grid;
+  gap: 2px;
+  align-content: start;
+}
+.stat dd {
+  margin: 0;
+  font-size: 40px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+.stat dt {
+  order: 2;
+  font-size: 14px;
+  font-weight: 600;
+}
+.stat .note {
+  order: 3;
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* Legend */
+.legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 22px;
+  font-size: 14px;
+}
+.legend li { display: flex; align-items: center; gap: 8px; }
+.legend b { font-weight: 600; }
+.legend span.dim { color: var(--muted); }
+.sw {
+  width: 16px; height: 16px; border-radius: 4px; flex: none;
+  border: 1.5px solid transparent;
+}
+.sw.dg { background: var(--glass); }
+.sw.tp { background: var(--uv); }
+.sw.app { background: var(--surface); border-color: var(--line); }
+.sw.ext { background: transparent; border: 1.5px dashed var(--muted); }
+.sw.hot { background: var(--hot); border-radius: 50%; }
+
+/* Diagram */
+figure { margin: 0; display: grid; gap: 14px; }
+.map-scroll {
+  overflow-x: auto;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 20px 16px 8px;
+}
+.map-scroll svg { display: block; width: 100%; min-width: 820px; height: auto; color: var(--edge); }
+figcaption { font-size: 14px; color: var(--muted); max-width: 70ch; }
+
+svg .band { fill: var(--band); }
+svg .n { fill: var(--surface); stroke: var(--line); stroke-width: 1.2; }
+svg .n-ext { fill: var(--surface); stroke: var(--muted); stroke-width: 1.2; stroke-dasharray: 4 3; }
+svg .n-dg { fill: var(--glass); }
+svg .n-dg-soft { fill: var(--glass-wash); stroke: var(--glass); stroke-width: 1.5; }
+svg .n-tp { fill: var(--uv); }
+svg .n-tp-soft { fill: var(--uv-wash); stroke: var(--uv); stroke-width: 1.5; }
+svg .n-ink { fill: var(--ink); }
+svg .e { fill: none; stroke: var(--edge); stroke-width: 1.6; }
+svg .e-hot { fill: none; stroke: var(--hot); stroke-width: 2; stroke-dasharray: 6 4; }
+svg .ahf { fill: var(--edge); }
+svg .ahf-hot { fill: var(--hot); }
+svg .t { fill: var(--fg); font-family: var(--font-body); font-size: 13px; font-weight: 600; }
+svg .t-on-glass { fill: var(--on-glass); }
+svg .t-on-uv { fill: var(--on-uv); }
+svg .t-on-ink { fill: var(--on-ink); }
+svg .s { fill: var(--muted); font-family: var(--font-mono); font-size: 10px; }
+svg .s-on-glass { fill: var(--on-glass); }
+svg .s-on-uv { fill: var(--on-uv); opacity: 0.88; }
+svg .s-on-ink { fill: var(--on-ink); opacity: 0.8; }
+svg .lbl { fill: var(--muted); font-family: var(--font-mono); font-size: 10.5px; font-weight: 500; }
+svg .lbl-hot { fill: var(--hot); font-weight: 600; }
+svg .zl { fill: var(--muted); font-family: var(--font-mono); font-size: 10px; font-weight: 600; letter-spacing: 0.12em; }
+svg .pill { fill: var(--surface); stroke: var(--edge); stroke-width: 1.2; }
+svg .pt { fill: var(--fg); font-family: var(--font-mono); font-size: 10px; font-weight: 500; }
+svg .bdg { fill: var(--hot); }
+svg .bdt { fill: var(--on-hot); font-family: var(--font-body); font-size: 11.5px; font-weight: 800; }
+
+/* Steps */
+h2 {
+  font-size: 26px;
+  letter-spacing: -0.015em;
+  font-weight: 700;
+  margin: 0 0 18px;
+  text-wrap: balance;
+}
+.steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+  gap: 14px;
+}
+.step {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 18px 20px 20px;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 14px;
+  align-content: start;
+  min-width: 0;
+}
+.step .num {
+  grid-row: span 2;
+  width: 30px; height: 30px; border-radius: 50%;
+  background: var(--hot); color: var(--on-hot);
+  display: grid; place-items: center;
+  font-weight: 800; font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+.step h3 { margin: 3px 0 0; font-size: 16px; font-weight: 700; }
+.step p { margin: 0; font-size: 14.5px; color: var(--muted); min-width: 0; }
+
+footer {
+  border-top: 1px solid var(--line);
+  padding-top: 18px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 24px;
+}
+</style>
+</head>
+<body>
+
+<main class="page">
+  <header>
+    <p class="eyebrow">Hotel ZGY · Concierge Agent · How it works</p>
+    <h1>Three ways in. <span class="uv">One durable workflow</span> per stay.</h1>
+    <p class="lede">Guests type in the browser, talk to it, or use the in-room device. Every turn becomes a Temporal Update on that guest's <code>ConciergeStayWorkflow</code>, which owns the conversation, the tools and the rides.</p>
+  </header>
+
+  <dl class="stats">
+    <div class="stat"><dd>3</dd><dt>ways in</dt><p class="note">chat · voice · room device</p></div>
+    <div class="stat"><dd>1</dd><dt>workflow per stay</dt><p class="note">ConciergeStayWorkflow</p></div>
+    <div class="stat"><dd>3</dd><dt>workflow types</dt><p class="note">stay · setup · ride booking</p></div>
+    <div class="stat"><dd>10</dd><dt>action tools</dt><p class="note">weather · places · routes · rides</p></div>
+    <div class="stat"><dd>8</dd><dt>knowledge files</dt><p class="note">knowledge/hotel-zgy/*.md</p></div>
+  </dl>
+
+  <figure>
+    <ul class="legend" aria-label="Legend">
+      <li><span class="sw dg"></span><span><b>Deepgram</b> <span class="dim">hears and speaks</span></span></li>
+      <li><span class="sw tp"></span><span><b>Temporal</b> <span class="dim">runs and remembers each stay</span></span></li>
+      <li><span class="sw app"></span><span><b>Concierge app</b> <span class="dim">.NET 11, wired by Aspire</span></span></li>
+      <li><span class="sw ext"></span><span><b>Outside services</b> <span class="dim">models, maps, weather</span></span></li>
+      <li><span class="sw hot"></span><span><b>Steps</b> <span class="dim">the life of one turn</span></span></li>
+    </ul>
+
+    <div class="map-scroll">
+      <svg viewBox="0 0 950 860" role="img" aria-label="System map. Browser chat, browser voice and the room device enter Concierge.Web through the AG-UI endpoint, the voice relay with Deepgram and the Think endpoint, or the guest REST API. ConciergeService sends every turn as a SubmitTurn Update through Temporal to the guest's ConciergeStayWorkflow in the workflow server. Its activities call the AI models, Geoapify, Open-Meteo and Postgres, and call the ride service over HTTP. Partial answer text streams back to Web through Postgres LISTEN/NOTIFY, and ride status returns through the stay's Workflow Stream.">
+        <defs>
+          <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" class="ahf"/>
+          </marker>
+          <marker id="ah-hot" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" class="ahf-hot"/>
+          </marker>
+        </defs>
+
+        <!-- Zone labels -->
+        <text class="zl" x="20" y="26">GUESTS</text>
+        <text class="zl" x="710" y="26">VOICE AI</text>
+
+        <!-- Row 1: clients + Deepgram -->
+        <rect class="n" x="20" y="40" width="210" height="56" rx="10"/>
+        <text class="t" x="125" y="64" text-anchor="middle">Browser chat</text>
+        <text class="s" x="125" y="82" text-anchor="middle">types a question</text>
+
+        <rect class="n" x="250" y="40" width="210" height="56" rx="10"/>
+        <text class="t" x="355" y="64" text-anchor="middle">Room device</text>
+        <text class="s" x="355" y="82" text-anchor="middle">ESP32 companion</text>
+
+        <rect class="n" x="480" y="40" width="210" height="56" rx="10"/>
+        <text class="t" x="585" y="64" text-anchor="middle">Browser voice</text>
+        <text class="s" x="585" y="82" text-anchor="middle">mic + speaker</text>
+
+        <rect class="n-dg" x="710" y="40" width="210" height="56" rx="10"/>
+        <text class="t t-on-glass" x="815" y="64" text-anchor="middle">Deepgram Voice Agent</text>
+        <text class="s s-on-glass" x="815" y="82" text-anchor="middle">speech-to-text · TTS</text>
+
+        <!-- Row 1 → Row 2 edges -->
+        <path class="e" d="M125,96 V184" marker-end="url(#ah)"/>
+        <text class="lbl" x="133" y="144">text</text>
+
+        <path class="e" d="M355,96 V184" marker-end="url(#ah)"/>
+        <rect class="pill" x="310" y="129" width="90" height="20" rx="10"/>
+        <text class="pt" x="355" y="143" text-anchor="middle">dev tunnel</text>
+        <text class="lbl" x="408" y="143">opt-in</text>
+
+        <path class="e" d="M585,96 V184" marker-start="url(#ah)" marker-end="url(#ah)"/>
+        <text class="lbl" x="577" y="143" text-anchor="end">audio</text>
+
+        <path class="e" d="M676,184 L724,96" marker-start="url(#ah)" marker-end="url(#ah)"/>
+        <text class="lbl" x="706" y="177">session</text>
+
+        <path class="e" d="M815,96 V184" marker-end="url(#ah)"/>
+        <rect class="pill" x="770" y="129" width="90" height="20" rx="10"/>
+        <text class="pt" x="815" y="143" text-anchor="middle">dev tunnel</text>
+        <text class="lbl" x="868" y="143">think</text>
+
+        <!-- Concierge.Web band -->
+        <rect class="band" x="10" y="158" width="920" height="190" rx="14"/>
+        <text class="zl" x="22" y="175">CONCIERGE.WEB</text>
+
+        <rect class="n" x="20" y="184" width="210" height="56" rx="10"/>
+        <text class="t" x="125" y="208" text-anchor="middle">AG-UI chat</text>
+        <text class="s" x="125" y="226" text-anchor="middle">/agui/concierge</text>
+
+        <rect class="n" x="250" y="184" width="210" height="56" rx="10"/>
+        <text class="t" x="355" y="208" text-anchor="middle">Guest REST API</text>
+        <text class="s" x="355" y="226" text-anchor="middle">/api/concierge/*</text>
+
+        <rect class="n-dg-soft" x="480" y="184" width="210" height="56" rx="10"/>
+        <text class="t" x="585" y="208" text-anchor="middle">Voice relay</text>
+        <text class="s" x="585" y="226" text-anchor="middle">/api/concierge/voice</text>
+
+        <rect class="n-dg-soft" x="710" y="184" width="210" height="56" rx="10"/>
+        <text class="t" x="815" y="208" text-anchor="middle">Think endpoint</text>
+        <text class="s" x="815" y="226" text-anchor="middle">/v1/chat/completions</text>
+
+        <path class="e" d="M125,240 V280" marker-end="url(#ah)"/>
+        <text class="lbl" x="133" y="264">turn</text>
+        <path class="e" d="M355,240 V280" marker-end="url(#ah)"/>
+        <text class="lbl" x="363" y="264">turn</text>
+        <path class="e" d="M815,240 V280" marker-end="url(#ah)"/>
+        <text class="lbl" x="823" y="264">turn</text>
+
+        <rect class="n-ink" x="20" y="280" width="900" height="52" rx="10"/>
+        <text class="t t-on-ink" x="470" y="302" text-anchor="middle">ConciergeService</text>
+        <text class="s s-on-ink" x="470" y="320" text-anchor="middle">Temporal client · the one path every channel takes into a stay</text>
+
+        <!-- Web ↔ Temporal -->
+        <path class="e" d="M300,332 V390" marker-end="url(#ah)"/>
+        <text class="lbl" x="308" y="365">SubmitTurn Update</text>
+        <path class="e" d="M560,390 V332" marker-end="url(#ah)"/>
+        <text class="lbl" x="568" y="365">ride feed stream</text>
+
+        <!-- Temporal -->
+        <rect class="n-tp" x="20" y="390" width="900" height="50" rx="10"/>
+        <text class="t t-on-uv" x="470" y="411" text-anchor="middle">Temporal</text>
+        <text class="s s-on-uv" x="470" y="428" text-anchor="middle">durable execution · Updates · Workflow Streams</text>
+
+        <!-- Worker groups -->
+        <rect class="band" x="10" y="480" width="590" height="232" rx="14"/>
+        <text class="zl" x="22" y="498">WORKFLOWSERVER</text>
+        <rect class="band" x="620" y="480" width="310" height="232" rx="14"/>
+        <text class="zl" x="632" y="498">RIDESERVICE</text>
+
+        <path class="e" d="M176,440 V510" marker-end="url(#ah)"/>
+        <text class="lbl" x="184" y="466">runs</text>
+        <path class="e" d="M463,440 V510" marker-end="url(#ah)"/>
+        <text class="lbl" x="471" y="466">at startup</text>
+        <path class="e" d="M745,510 V440" marker-end="url(#ah)"/>
+        <text class="lbl" x="737" y="466" text-anchor="end">update-with-start</text>
+        <path class="e" d="M850,440 V510" marker-start="url(#ah)" marker-end="url(#ah)"/>
+        <text class="lbl" x="858" y="466">ride feed</text>
+
+        <rect class="n-tp-soft" x="26" y="510" width="300" height="64" rx="10"/>
+        <text class="t" x="176" y="537" text-anchor="middle">ConciergeStayWorkflow</text>
+        <text class="s" x="176" y="556" text-anchor="middle">one per stay · memory · tool loop</text>
+
+        <rect class="n-tp-soft" x="342" y="510" width="242" height="64" rx="10"/>
+        <text class="t" x="463" y="537" text-anchor="middle">HotelSetupWorkflow</text>
+        <text class="s" x="463" y="556" text-anchor="middle">seeds stays · indexes .md files</text>
+
+        <path class="e" d="M176,574 V606" marker-end="url(#ah)"/>
+        <text class="lbl" x="184" y="594">schedules</text>
+        <path class="e" d="M463,574 V606" marker-end="url(#ah)"/>
+
+        <rect class="n" x="26" y="606" width="558" height="84" rx="10"/>
+        <text class="t" x="305" y="634" text-anchor="middle">Activities</text>
+        <text class="s" x="305" y="654" text-anchor="middle">model call · knowledge search · weather · places · routes · transcript</text>
+        <text class="s" x="305" y="672" text-anchor="middle">each one retried and recorded by Temporal</text>
+
+        <rect class="n" x="636" y="510" width="135" height="64" rx="10"/>
+        <text class="t" x="703.5" y="537" text-anchor="middle">Ride API</text>
+        <text class="s" x="703.5" y="556" text-anchor="middle">/rides</text>
+
+        <rect class="n-tp-soft" x="783" y="510" width="135" height="64" rx="10"/>
+        <text class="t" x="850.5" y="537" text-anchor="middle">Ride workflow</text>
+        <text class="s" x="850.5" y="556" text-anchor="middle">RideBookingWorkflow</text>
+
+        <path class="e" d="M584,648 H703 V574" marker-end="url(#ah)"/>
+        <text class="lbl" x="610" y="666">ride tools · HTTP</text>
+
+        <path class="e" d="M850,574 V750" marker-end="url(#ah)"/>
+        <text class="lbl" x="858" y="664">stores</text>
+
+        <!-- Activities → services & data -->
+        <path class="e" d="M93,690 V750" marker-end="url(#ah)"/>
+        <text class="lbl" x="101" y="724">chat + embed</text>
+        <path class="e" d="M234,690 V750" marker-end="url(#ah)"/>
+        <text class="lbl" x="242" y="724">HTTP</text>
+        <path class="e" d="M375,690 V750" marker-end="url(#ah)"/>
+        <text class="lbl" x="383" y="724">HTTP</text>
+        <path class="e" d="M516,690 V750" marker-end="url(#ah)"/>
+        <text class="lbl lbl-hot" x="524" y="724">pg_notify</text>
+
+        <rect class="n-ext" x="26" y="750" width="135" height="56" rx="10"/>
+        <text class="t" x="93.5" y="774" text-anchor="middle">AI models</text>
+        <text class="s" x="93.5" y="792" text-anchor="middle">Ollama or Foundry</text>
+
+        <rect class="n-ext" x="167" y="750" width="135" height="56" rx="10"/>
+        <text class="t" x="234.5" y="774" text-anchor="middle">Geoapify</text>
+        <text class="s" x="234.5" y="792" text-anchor="middle">places · routes</text>
+
+        <rect class="n-ext" x="308" y="750" width="135" height="56" rx="10"/>
+        <text class="t" x="375.5" y="774" text-anchor="middle">Open-Meteo</text>
+        <text class="s" x="375.5" y="792" text-anchor="middle">weather</text>
+
+        <rect class="n" x="449" y="750" width="135" height="56" rx="10"/>
+        <text class="t" x="516.5" y="774" text-anchor="middle">Postgres</text>
+        <text class="s" x="516.5" y="792" text-anchor="middle">concierge · pgvector</text>
+
+        <rect class="n" x="783" y="750" width="135" height="56" rx="10"/>
+        <text class="t" x="850.5" y="774" text-anchor="middle">Postgres</text>
+        <text class="s" x="850.5" y="792" text-anchor="middle">rides</text>
+
+        <!-- Answer stream back to Web -->
+        <path class="e-hot" d="M516,806 V830 H940 V306 H920" marker-end="url(#ah-hot)"/>
+        <text class="lbl lbl-hot" x="728" y="848" text-anchor="middle">answer text streams back · LISTEN / NOTIFY</text>
+
+        <!-- Step badges -->
+        <g>
+          <circle class="bdg" cx="107" cy="140" r="11"/><text class="bdt" x="107" y="144" text-anchor="middle">1</text>
+          <circle class="bdg" cx="797" cy="166" r="11"/><text class="bdt" x="797" y="170" text-anchor="middle">1</text>
+          <circle class="bdg" cx="282" cy="361" r="11"/><text class="bdt" x="282" y="365" text-anchor="middle">2</text>
+          <circle class="bdg" cx="158" cy="462" r="11"/><text class="bdt" x="158" y="466" text-anchor="middle">3</text>
+          <circle class="bdg" cx="158" cy="590" r="11"/><text class="bdt" x="158" y="594" text-anchor="middle">4</text>
+          <circle class="bdg" cx="940" cy="570" r="11"/><text class="bdt" x="940" y="574" text-anchor="middle">5</text>
+          <circle class="bdg" cx="542" cy="361" r="11"/><text class="bdt" x="542" y="365" text-anchor="middle">6</text>
+        </g>
+      </svg>
+    </div>
+    <figcaption>Layers run top to bottom: guests, the Web app, Temporal, the two worker services, then the models, APIs and databases they call. The dashed line is the only path that skips Temporal: partial answer text goes from the model activity through Postgres straight back to Web.</figcaption>
+  </figure>
+
+  <section>
+    <h2>The life of one turn</h2>
+    <ol class="steps">
+      <li class="step"><span class="num">1</span><h3>Ask</h3><p>The guest types in the chat or speaks. For voice, Deepgram transcribes and calls the Think endpoint through the dev tunnel, using the concierge as its LLM.</p></li>
+      <li class="step"><span class="num">2</span><h3>Submit</h3><p>Whatever the channel, <code>ConciergeService</code> sends one <code>SubmitTurn</code> Update. The browser, the voice relay and the room device all share this path.</p></li>
+      <li class="step"><span class="num">3</span><h3>Run</h3><p>Temporal delivers the Update to the guest's <code>ConciergeStayWorkflow</code>, a long-running workflow that holds the conversation, pending ride offers and memory.</p></li>
+      <li class="step"><span class="num">4</span><h3>Think and act</h3><p>The workflow searches hotel knowledge in pgvector, calls the chat model, and runs each tool the model asks for as an activity that Temporal retries and records.</p></li>
+      <li class="step"><span class="num">5</span><h3>Stream back</h3><p>The model activity sends partial answer text with <code>pg_notify</code>. Web listens and streams it into the chat, or to Deepgram to be spoken.</p></li>
+      <li class="step"><span class="num">6</span><h3>Track rides</h3><p>Each booking runs as its own workflow in the ride service. Status changes are published to the stay's Workflow Stream, which feeds the ride Activity panel.</p></li>
+    </ol>
+  </section>
+
+  <footer>
+    <span>Source: src/Concierge.AppHost/AppHost.cs and the workflow code</span>
+    <span>Text version: docs/architecture.md</span>
+    <span>Drawn 2026-11-09</span>
+  </footer>
+</main>
+</body>
+</html>

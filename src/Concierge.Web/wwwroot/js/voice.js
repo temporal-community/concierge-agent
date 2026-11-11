@@ -11,6 +11,48 @@
     };
 
     let current = null;
+    // Level meters (the AG-UI page): elements whose --level (0..1) follows the microphone and the
+    // agent's voice. Set from an animation frame, never over the Blazor circuit.
+    const meters = { mic: null, speaker: null };
+    // Spoken replies muted by the guest; kept across reconnects.
+    let speakerMuted = false;
+
+    /** RMS of an analyser's current window, 0..1. */
+    function levelOf(analyser, buffer) {
+        if (!analyser) return 0;
+        analyser.getFloatTimeDomainData(buffer);
+        let sum = 0;
+        for (let i = 0; i < buffer.length; i++) sum += buffer[i] * buffer[i];
+        return Math.sqrt(sum / buffer.length);
+    }
+
+    function setLevel(element, level) {
+        element?.style?.setProperty("--level", level.toFixed(3));
+    }
+
+    // Speech RMS sits around 0.02-0.2, so scale up; ease toward the new level to avoid flicker.
+    function startMeters(voice) {
+        if (typeof requestAnimationFrame !== "function") return;
+        const buffer = new Float32Array(1024);
+        let mic = 0;
+        let speaker = 0;
+        const frame = () => {
+            if (voice.stopped || current !== voice) return;
+            mic += (Math.min(1, levelOf(voice.micAnalyser, buffer) * 6) - mic) * 0.5;
+            speaker += (Math.min(1, levelOf(voice.speakerAnalyser, buffer) * 4) - speaker) * 0.5;
+            setLevel(meters.mic, mic);
+            setLevel(meters.speaker, speaker);
+            voice.meterFrame = requestAnimationFrame(frame);
+        };
+        voice.meterFrame = requestAnimationFrame(frame);
+    }
+
+    function stopMeters(voice) {
+        if (voice.meterFrame && typeof cancelAnimationFrame === "function") cancelAnimationFrame(voice.meterFrame);
+        voice.meterFrame = 0;
+        setLevel(meters.mic, 0);
+        setLevel(meters.speaker, 0);
+    }
 
     function notify(voice, state, message = null, code = 0) {
         if (voice.state === state && state !== "disconnected") return;
@@ -29,7 +71,20 @@
         voice.playContext = context;
         await context.audioWorklet.addModule("/js/voice-play-worklet.js");
         const node = new AudioWorkletNode(context, "concierge-play", { outputChannelCount: [1] });
-        node.connect(context.destination);
+        // Muting replies happens after the worklet, so playback acks, pacing and barge-in are unchanged.
+        if (typeof context.createGain === "function") {
+            voice.speakerGain = context.createGain();
+            voice.speakerGain.gain.value = speakerMuted ? 0 : 1;
+            node.connect(voice.speakerGain);
+            voice.speakerGain.connect(context.destination);
+        } else {
+            node.connect(context.destination);
+        }
+        if (typeof context.createAnalyser === "function") {
+            voice.speakerAnalyser = context.createAnalyser();
+            voice.speakerAnalyser.fftSize = 1024;
+            node.connect(voice.speakerAnalyser);
+        }
         node.port.onmessage = (event) => onPlayback(voice, event.data);
         voice.playNode = node;
         await context.resume();
@@ -60,7 +115,13 @@
             socket.send(event.data);
         };
         voice.micStream.getTracks().forEach((track) => { track.enabled = !voice.muted; });
-        context.createMediaStreamSource(voice.micStream).connect(node);
+        const source = context.createMediaStreamSource(voice.micStream);
+        source.connect(node);
+        if (typeof context.createAnalyser === "function") {
+            voice.micAnalyser = context.createAnalyser();
+            voice.micAnalyser.fftSize = 1024;
+            source.connect(voice.micAnalyser);
+        }
         await context.resume();
         notify(voice, "listening");
     }
@@ -192,6 +253,7 @@
         if (voice.stopped) return;
         setIdleWarning(voice, false);
         voice.stopped = true;
+        stopMeters(voice);
         if (current === voice) current = null;
         try {
             if (voice.socket && voice.socket.readyState <= WebSocket.OPEN) voice.socket.close(1000, "Voice stopped");
@@ -222,6 +284,7 @@
             const voice = { dotNet, state: null, stopped: false };
             current = voice;
             notify(voice, "connecting");
+            startMeters(voice);
             try {
                 await createPlayback(voice);
             } catch {
@@ -268,6 +331,27 @@
 
         stop() {
             if (current) end(current, null);
+        },
+
+        /** Elements whose --level follows the microphone and the agent's voice; null detaches. */
+        attachMeters(mic, speaker) {
+            setLevel(meters.mic, 0);
+            setLevel(meters.speaker, 0);
+            meters.mic = mic ?? null;
+            meters.speaker = speaker ?? null;
+        },
+
+        /** Detaches only if `mic` is still attached: a newer component may have replaced it. */
+        detachMeters(mic) {
+            if (meters.mic !== mic) return;
+            this.attachMeters(null, null);
+        },
+
+        /** Mutes or unmutes spoken replies; the reply still plays silently, so pacing is unchanged. */
+        setSpeakerMuted(muted) {
+            speakerMuted = Boolean(muted);
+            if (current?.speakerGain) current.speakerGain.gain.value = speakerMuted ? 0 : 1;
+            return speakerMuted;
         },
     };
 })();

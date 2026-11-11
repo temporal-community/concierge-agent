@@ -1,5 +1,7 @@
+using System.Text.Json;
 using Concierge.WorkflowServer.Workflows;
 using Concierge.Contracts;
+using Microsoft.Extensions.Logging;
 using Npgsql;
 using Temporalio.Activities;
 using Temporalio.Exceptions;
@@ -35,8 +37,9 @@ public sealed class ConciergeTranscriptActivities(NpgsqlDataSource dataSource)
                     assistant_message,
                     occurred_at_utc,
                     interrupted,
-                    superseded)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                    superseded,
+                    metadata)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb)
                 ON CONFLICT (stay_id, turn_id) DO NOTHING;
                 """,
                 connection,
@@ -51,6 +54,7 @@ public sealed class ConciergeTranscriptActivities(NpgsqlDataSource dataSource)
             insert.Parameters.AddWithValue(turn.OccurredAtUtc);
             insert.Parameters.AddWithValue(turn.Interrupted);
             insert.Parameters.AddWithValue(turn.Superseded);
+            insert.Parameters.AddWithValue(WriteMetadata(turn));
 
             if (await insert.ExecuteNonQueryAsync(cancellationToken) == 0)
             {
@@ -77,7 +81,7 @@ public sealed class ConciergeTranscriptActivities(NpgsqlDataSource dataSource)
         await using var command = dataSource.CreateCommand(
             """
             SELECT turn_id, turn_sequence, channel, guest_message,
-                   assistant_message, occurred_at_utc, interrupted, superseded
+                   assistant_message, occurred_at_utc, interrupted, superseded, metadata::text
             FROM transcript_turns
             WHERE stay_id = $1
             ORDER BY turn_sequence, turn_id;
@@ -122,7 +126,7 @@ public sealed class ConciergeTranscriptActivities(NpgsqlDataSource dataSource)
         await using var command = dataSource.CreateCommand(
             """
             SELECT turn_id, turn_sequence, channel, guest_message,
-                   assistant_message, occurred_at_utc, interrupted, superseded
+                   assistant_message, occurred_at_utc, interrupted, superseded, metadata::text
             FROM transcript_turns
             WHERE stay_id = $1 AND turn_id = $2;
             """);
@@ -152,6 +156,17 @@ public sealed class ConciergeTranscriptActivities(NpgsqlDataSource dataSource)
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    /// <summary>Deletes a stay's whole persisted transcript for a guest-requested reset. Idempotent.</summary>
+    [Activity(nameof(DeleteForStayAsync))]
+    public async Task DeleteForStayAsync(DeleteStayTranscriptRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        await using var command = dataSource.CreateCommand(
+            "DELETE FROM transcript_turns WHERE stay_id = $1;");
+        command.Parameters.AddWithValue(request.StayId);
+        await command.ExecuteNonQueryAsync(ActivityExecutionContext.Current.CancellationToken);
+    }
+
     private static ConciergeTranscriptTurn ReadTurn(NpgsqlDataReader reader) =>
         new(
             reader.GetString(0),
@@ -161,7 +176,38 @@ public sealed class ConciergeTranscriptActivities(NpgsqlDataSource dataSource)
             reader.GetString(4),
             reader.GetFieldValue<DateTimeOffset>(5),
             reader.GetBoolean(6),
-            reader.GetBoolean(7));
+            reader.GetBoolean(7),
+            ReadRideCard(reader.GetString(8)));
+
+    // The card rides in the turn's existing metadata column: no schema change, and the
+    // retry-safety comparison (EnsureExistingTurnMatchesAsync) stays on the guest and answer text.
+    private static readonly JsonSerializerOptions MetadataJson = new(JsonSerializerDefaults.Web);
+
+    private sealed record TranscriptTurnMetadata(ConciergeRideCard? RideCard);
+
+    internal static string WriteMetadata(ConciergeTranscriptTurn turn) =>
+        turn.RideCard is null ? "{}" : JsonSerializer.Serialize(new TranscriptTurnMetadata(turn.RideCard), MetadataJson);
+
+    /// <summary>A malformed card is dropped, never thrown: one bad row must not break the stay's history.</summary>
+    internal static ConciergeRideCard? ReadRideCard(string metadata)
+    {
+        try
+        {
+            var card = JsonSerializer.Deserialize<TranscriptTurnMetadata>(metadata, MetadataJson)?.RideCard;
+            return card is { Kind.Length: > 0, Rides: not null } ? card : null;
+        }
+        catch (JsonException exception)
+        {
+            if (ActivityExecutionContext.HasCurrent)
+            {
+                ActivityExecutionContext.Current.Logger.LogWarning(
+                    "Ignored an unreadable ride card in transcript metadata. Cause types: {CauseTypes}.",
+                    ConciergeDiagnostics.ExceptionTypeChain(exception));
+            }
+
+            return null;
+        }
+    }
 
     /// <summary>Monotonic audit marker; never rewrites guest text, answer text, or action outcomes.</summary>
     [Activity(nameof(MarkSupersededAsync))]

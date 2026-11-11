@@ -371,6 +371,66 @@ public sealed class ConciergeApiTests(PostgreSqlFixture postgreSql)
         return session!.Credential;
     }
 
+    [Fact]
+    public async Task ResetStartsOnlyThatStayOverAndKeepsTheCredential()
+    {
+        await using var host = await ConciergeTestHost.StartAsync(postgreSql);
+        var today = ConciergeTestHost.HotelToday;
+        var riveraStay = await host.SeedStayAsync("Rivera", "412", today, today.AddDays(2));
+        await host.SeedStayAsync("Morgan", "812", today, today.AddDays(2));
+        var rivera = await VerifiedCredentialAsync(host, "Rivera", "412");
+        var riveraOther = await VerifiedCredentialAsync(host, "Rivera", "412");
+        var morgan = await VerifiedCredentialAsync(host, "Morgan", "812");
+
+        foreach (var credential in new string?[] { null, "forged-credential", rivera + "x" })
+        {
+            await AssertErrorAsync(
+                await Send(host, HttpMethod.Post, "/api/concierge/reset", credential),
+                HttpStatusCode.Unauthorized,
+                "unauthorized");
+        }
+        Assert.Empty(host.ActionTools.RidePurges);
+
+        await SubmitAsync(host, rivera, Turn("r-1", "Where is breakfast?", "web"));
+        await SubmitAsync(host, riveraOther, Turn("r-2", "What time?", "voice"));
+        await SubmitAsync(host, morgan, Turn("m-1", "Is there a gym?", "web"));
+
+        var reset = await Send(host, HttpMethod.Post, "/api/concierge/reset", rivera);
+
+        Assert.Equal(HttpStatusCode.NoContent, reset.StatusCode);
+        Assert.Equal(riveraStay, Assert.Single(host.ActionTools.RidePurges).StayId);
+        Assert.Empty(await HistoryTurnIdsAsync(host, rivera));
+        Assert.Empty(await HistoryTurnIdsAsync(host, riveraOther));
+        Assert.Equal(["m-1"], await HistoryTurnIdsAsync(host, morgan));
+        // The guest stays signed in and the stay's transcript starts again at sequence 0.
+        Assert.Equal(0, (await SubmitAsync(host, rivera, Turn("r-3", "Hello again.", "web"))).Sequence);
+        Assert.DoesNotContain("Where is breakfast?", host.ChatClient.Requests[^1].UserTexts);
+    }
+
+    [Fact]
+    public async Task IncompleteResetReturnsTheWorkflowsSpecificGuidance()
+    {
+        await using var host = await ConciergeTestHost.StartAsync(postgreSql);
+        var today = ConciergeTestHost.HotelToday;
+        await host.SeedStayAsync("Rivera", "412", today, today.AddDays(2));
+        var rivera = await VerifiedCredentialAsync(host, "Rivera", "412");
+        await SubmitAsync(host, rivera, Turn("r-1", "Where is breakfast?", "web"));
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            host.ActionTools.RidePurgeFailures.Enqueue(new InvalidOperationException("ride service down"));
+        }
+
+        var response = await Send(host, HttpMethod.Post, "/api/concierge/reset", rivera);
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        var error = (await response.Content.ReadFromJsonAsync<ConciergeApiError>())!;
+        Assert.Equal("reset_incomplete", error.Code);
+        Assert.Equal(
+            "Your rides could not be removed, so nothing was reset. Please try Start over again.",
+            error.Message);
+        Assert.Equal(["r-1"], await HistoryTurnIdsAsync(host, rivera));
+    }
+
     private static async Task<HttpResponseMessage> Send(
         ConciergeTestHost host,
         HttpMethod method,

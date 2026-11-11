@@ -14,10 +14,15 @@ public sealed record ConciergeTurnRequest(string TurnId, string UserMessage, str
 
 public sealed record ConciergeApiError(string Code, string Message);
 
+/// <summary>
+/// A failure with a guest-facing <see cref="Exception.Message"/>. The API sends only the code and message;
+/// <paramref name="innerException"/> is the real cause, kept in memory for Development diagnostics.
+/// </summary>
 public sealed class ConciergeApiException(
     string code,
     string message,
-    int statusCode) : Exception(message)
+    int statusCode,
+    Exception? innerException = null) : Exception(message, innerException)
 {
     public string Code { get; } = code;
 
@@ -114,10 +119,12 @@ public static class ConciergeWorkflowNames
     public const string MarkTurnInterruptedUpdate = "MarkTurnInterrupted";
     public const string HistoryUpdate = "History";
     public const string EndInteractionUpdate = "EndInteraction";
+    public const string ResetStayUpdate = "ResetStay";
     public const string RideActivityReadStateQuery = "RideActivityReadState";
     public const string AdvanceRideActivityReadOffsetUpdate = "AdvanceRideActivityReadOffset";
     public const string TurnConflictErrorType = "ConciergeTurnConflict";
     public const string StayExpiredErrorType = "ConciergeStayExpired";
+    public const string ResetIncompleteErrorType = "ConciergeResetIncomplete";
 }
 
 public sealed class ConciergePersistenceOptions
@@ -130,4 +137,10 @@ public sealed class ConciergePersistenceOptions
     public int FlushIntervalSeconds { get; set; } = 30;
 
     public int FlushBatchSize { get; set; } = DefaultFlushBatchSize;
+
+    /// <summary>
+    /// How long an idle stay waits before it continues as new while ride-feed polls are waiting, which
+    /// releases polls abandoned by closed tabs and restarted Web instances (ADR 0015). 0 turns it off.
+    /// </summary>
+    public int IdleRolloverSeconds { get; set; } = 900;
 }

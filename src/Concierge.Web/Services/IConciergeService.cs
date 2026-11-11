@@ -72,6 +72,14 @@ public interface IConciergeService
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Starts the stay over: deletes its rides and transcript and clears the stay's conversation
+    /// memory. The credential stays valid. Ends this session's voice call first.
+    /// </summary>
+    Task ResetAsync(
+        string? bearerCredential,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Authenticates a chat credential for voice and reports whether the stay already has turns.
     /// Throws a 401 <see cref="ConciergeApiException"/> when the credential is invalid or expired, or
     /// when the session has no verified guest profile.

@@ -1,14 +1,9 @@
 @*
     The single centered card used by the verification view and the end-of-chat
-    views: wave icon, title, description, then caller-supplied body content.
+    views: title, description, then caller-supplied body content.
     Unmatched attributes (role, aria-modal, aria-labelledby, …) splat onto the card.
 *@
 <section class="focus-card @Modifier" @attributes="Attributes">
-    <span class="wave-icon focus-card-icon" aria-hidden="true">
-        <svg viewBox="0 0 32 24" focusable="false">
-            <path d="M2 9c4.7 0 4.7-5 9.3-5s4.7 5 9.4 5S25.4 4 30 4M2 18c4.7 0 4.7-5 9.3-5s4.7 5 9.4 5 4.7-5 9.3-5" />
-        </svg>
-    </span>
     <h1 id="@TitleId">@Title</h1>
     <p id="@DescriptionId" class="focus-card-intro">@Description</p>
     @ChildContent

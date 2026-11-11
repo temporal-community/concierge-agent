@@ -1,7 +1,6 @@
 #:project ../../src/Concierge.RideService/Concierge.RideService.csproj
 #:project ../../src/Concierge.WorkflowServer/Concierge.WorkflowServer.csproj
 // The transitive OllamaSharp generator targets a newer compiler; it is not used by this check.
-#:property NoWarn=$(NoWarn);CS9057
 #:property JsonSerializerIsReflectionEnabledByDefault=true
 
 // Opt-in Step 5 check against the already-running Aspire AppHost. Aspire resource

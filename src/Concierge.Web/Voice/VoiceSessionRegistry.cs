@@ -15,6 +15,8 @@ public enum VoiceRevocation
     Expired,
     Replaced,
     Ended,
+    // The stay was reset while voice ran; the chat credential stays valid, so the browser can reconnect.
+    Reset,
 }
 
 /// <summary>
@@ -206,7 +208,7 @@ public sealed class VoiceSessionRegistry(
     /// Revokes every voice bearer of a chat session and forgets its voice sessions. Admitted turns
     /// keep running; only new Think requests are refused.
     /// </summary>
-    public void EndSession(Guid chatSessionId)
+    public void EndSession(Guid chatSessionId, VoiceRevocation reason = VoiceRevocation.Ended)
     {
         foreach (var session in sessions.Values.Where(session => session.Stay.SessionId == chatSessionId))
         {
@@ -218,7 +220,7 @@ public sealed class VoiceSessionRegistry(
                 session.ClosedSubscribers.Clear();
             }
 
-            active?.Revoke(VoiceRevocation.Ended);
+            active?.Revoke(reason);
         }
     }
 
